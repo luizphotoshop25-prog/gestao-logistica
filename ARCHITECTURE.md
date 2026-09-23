@@ -39,6 +39,8 @@ Clientes e remessas possuem pedidos; pedidos possuem anexos, itens, observaçõe
 
 `listOrders` junta pedido/cliente/remessa, `deriveStage` determina a etapa e `operationalInfo` calcula fila, responsabilidade e urgência. O renderer apenas apresenta e solicita detalhes. `updateMilestone` valida próximo marco/data, ajusta prazos de seleção e grava evento.
 
+Cada pedido possui `revisao`, iniciada em `1` e aumentada por qualquer escrita no pedido. A ficha devolve essa revisão e `updateOrder` exige a revisão recebida: o `UPDATE` transacional só ocorre quando ela ainda é a atual. Divergências retornam `REVISION_CONFLICT` (e HTTP `409`) sem sobrescrever dados. Não há repetição automática: a tentativa rejeitada retorna ao cliente sem gerar evento de alteração. O smoke HTTP simultâneo com duas requisições na mesma revisão confirmou um sucesso, um `409`, uma única incrementação e banco íntegro.
+
 `importer.cjs` normaliza planilhas; `importSafeRows` faz backup, localiza/cria cliente, grava em transação e ignora sessão duplicada. SIWIN é espelhado no SQLite após consultas bloqueadas contra escrita. Thunderbird é idempotente por `message_id`, vincula por sessão e não sobrescreve seleção existente.
 
 Vite produz `dist/` com `base: "./"`; `electron-builder` gera instalador Windows NSIS com os módulos descritos em `package.json`.

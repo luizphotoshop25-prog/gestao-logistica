@@ -99,6 +99,7 @@ function initialize(app) {
       acompanhamento_status TEXT NOT NULL DEFAULT 'ativo',
       origem TEXT NOT NULL DEFAULT 'manual',
       linha_origem INTEGER,
+      revisao INTEGER NOT NULL DEFAULT 1,
       criado_em TEXT NOT NULL,
       atualizado_em TEXT NOT NULL
     );
@@ -175,6 +176,7 @@ function initialize(app) {
     db.exec("ALTER TABLE pedidos RENAME COLUMN prazo_maximo_legado_em TO prazo_maximo_em");
   }
   ensureOrderColumns();
+  ensureOrderRevision();
   ensureSelectionEmailColumns();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
@@ -208,6 +210,20 @@ function ensureOrderColumns() {
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE pedidos ADD COLUMN ${name} ${type}`);
+  }
+}
+
+function ensureOrderRevision() {
+  const columns = db.prepare("PRAGMA table_info(pedidos)").all();
+  if (columns.some((column) => column.name === "revisao")) return;
+  createSafetyBackup("revisao-pedidos");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("ALTER TABLE pedidos ADD COLUMN revisao INTEGER NOT NULL DEFAULT 1");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
 }
 
@@ -477,6 +493,8 @@ function getOrder(orderId) {
 
 function updateOrder(input) {
   const orderId = clean(input?.id);
+  const expectedRevision = input?.revisao;
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "A revisão do pedido é obrigatória. Reabra a ficha." };
   const values = input?.values && typeof input.values === "object" ? input.values : {};
   const allowed = new Set([
     "galeria_url", "galeria_publicada_em", "link_enviado_em", "selecao_finalizada_em",
@@ -489,6 +507,7 @@ function updateOrder(input) {
   if (!entries.length) return { ok: false, message: "Nenhuma informação válida foi enviada." };
   const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(orderId);
   if (!order) return { ok: false, message: "Pedido não encontrado." };
+  if (order.revisao !== expectedRevision) return { ok: false, error: "REVISION_CONFLICT", revisaoAtual: order.revisao, message: "Este pedido foi alterado por outro usuário. Suas alterações não foram salvas. Reabra a ficha para consultar a versão atual." };
   for (const [field, value] of entries) {
     if (editableDateFields.has(field) && clean(value) && !validIsoDate(clean(value)))
       return { ok: false, message: `A data informada em ${field} é inválida.` };
@@ -529,8 +548,12 @@ function updateOrder(input) {
   normalized.push(["atualizado_em", now()]);
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare(`UPDATE pedidos SET ${normalized.map(([field]) => `${field}=?`).join(",")} WHERE id=?`)
-      .run(...normalized.map(([, value]) => value), orderId);
+    const updated = db.prepare(`UPDATE pedidos SET ${normalized.map(([field]) => `${field}=?`).join(",")}, revisao=revisao+1 WHERE id=? AND revisao=?`)
+      .run(...normalized.map(([, value]) => value), orderId, expectedRevision);
+    if (updated.changes !== 1) {
+      db.exec("ROLLBACK");
+      return { ok: false, error: "REVISION_CONFLICT", message: "Este pedido foi alterado por outro usuário. Suas alterações não foram salvas. Reabra a ficha para consultar a versão atual." };
+    }
     db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)").run(
       id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => field !== "prazo_tratamento_em" && field !== "prazo_maximo_em" && field !== "atualizado_em").map(([field]) => field).join(", ")}.`, now(),
     );
@@ -655,7 +678,7 @@ function bulkUpdateOrders(input = {}) {
     let description;
     if (action === "archive" || action === "activate" || action === "conclude_previous") {
       const status = action === "archive" ? "arquivado" : action === "activate" ? "ativo" : "concluido_anteriormente";
-      db.prepare(`UPDATE pedidos SET acompanhamento_status=?,atualizado_em=? WHERE id IN (${existingPlaceholders})`).run(status, now(), ...existingIds);
+      db.prepare(`UPDATE pedidos SET acompanhamento_status=?,atualizado_em=?,revisao=revisao+1 WHERE id IN (${existingPlaceholders})`).run(status, now(), ...existingIds);
       description = `Acompanhamento alterado para ${status.replaceAll("_", " ")}.`;
     } else if (action === "add_shipment") {
       const friday = clean(input.date) || nextFriday();
@@ -664,12 +687,12 @@ function bulkUpdateOrders(input = {}) {
         shipment = { id: id() };
         db.prepare("INSERT INTO remessas VALUES (?,?,?,?,?,?)").run(shipment.id, friday, null, null, now(), now());
       }
-      db.prepare(`UPDATE pedidos SET remessa_id=?,atualizado_em=? WHERE id IN (${existingPlaceholders})`).run(shipment.id, now(), ...existingIds);
+      db.prepare(`UPDATE pedidos SET remessa_id=?,atualizado_em=?,revisao=revisao+1 WHERE id IN (${existingPlaceholders})`).run(shipment.id, now(), ...existingIds);
       description = `Incluído na remessa planejada para ${friday}.`;
     } else {
       const fields = { printing_sent: "impressao_enviada_em", prints_received: "impressao_recebida_em", label_created: "etiqueta_criada_em", posted: "postado_em" };
       const field = fields[action];
-      db.prepare(`UPDATE pedidos SET ${field}=?,atualizado_em=? WHERE id IN (${existingPlaceholders})`).run(date, now(), ...existingIds);
+      db.prepare(`UPDATE pedidos SET ${field}=?,atualizado_em=?,revisao=revisao+1 WHERE id IN (${existingPlaceholders})`).run(date, now(), ...existingIds);
       if (action === "printing_sent") db.prepare(`UPDATE pedidos SET fornecedor_impressao=coalesce(nullif(fornecedor_impressao,''),'Digital Fotos') WHERE id IN (${existingPlaceholders})`).run(...existingIds);
       description = `Etapa ${field} registrada em ${date}.`;
     }
@@ -727,7 +750,7 @@ function linkSiwinSessions(rows) {
   if (!Array.isArray(rows) || !rows.length) return { linked: 0, unmatched: getUnlinkedSessions().length };
   const findClient = db.prepare("SELECT id FROM clientes WHERE siwin_cad=?");
   const findOrder = db.prepare("SELECT id FROM pedidos WHERE sessao=? AND cliente_id IS NULL");
-  const link = db.prepare("UPDATE pedidos SET cliente_id=?, atualizado_em=? WHERE id=? AND cliente_id IS NULL");
+  const link = db.prepare("UPDATE pedidos SET cliente_id=?, atualizado_em=?, revisao=revisao+1 WHERE id=? AND cliente_id IS NULL");
   const addEvent = db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)");
   let linked = 0;
   db.exec("BEGIN IMMEDIATE");
@@ -839,7 +862,7 @@ function syncSiwinOrders(rows) {
     cliente_id=COALESCE(cliente_id,?),siwin_ped=COALESCE(?,siwin_ped),siwin_situacao=?,
     siwin_pedido_em=?,siwin_prev_entrega_em=?,siwin_sessao_em=?,
     fotos_quantidade=CASE WHEN origem='siwin' OR fotos_quantidade IS NULL THEN ? ELSE fotos_quantidade END,
-    atualizado_em=? WHERE id=?`);
+    atualizado_em=?,revisao=revisao+1 WHERE id=?`);
   let importedOrders = 0;
   let updatedOrders = 0;
   const timestamp = now();
@@ -889,7 +912,7 @@ function replaceSiwinOrderItems(rows) {
     id,pedido_id,siwin_ped_ms,produto,quantidade,fotos,valor_unitario,desconto,valor_total,
     cobrado,situacao,tipo_foto,ampliacao,sincronizado_em
   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const updateChargedPhotos = db.prepare("UPDATE pedidos SET fotos_quantidade=?,atualizado_em=? WHERE id=?");
+  const updateChargedPhotos = db.prepare("UPDATE pedidos SET fotos_quantidade=?,atualizado_em=?,revisao=revisao+1 WHERE id=?");
   let syncedItems = 0;
   let recalculatedOrders = 0;
   const timestamp = now();
@@ -989,7 +1012,7 @@ function importThunderbirdSelections(records) {
       linked += 1;
       if (!order.selecao_finalizada_em) {
         db.prepare(`UPDATE pedidos SET selecao_finalizada_em=?,prazo_tratamento_em=?,
-          prazo_maximo_em=?,atualizado_em=? WHERE id=?`).run(finalDate,
+          prazo_maximo_em=?,atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(finalDate,
           addCalendarDays(finalDate, 20), addCalendarDays(finalDate, 60), timestamp, order.id);
         datesSet += 1;
         insertEvent.run(id(), order.id, "selecao_email",
@@ -1009,7 +1032,7 @@ function importThunderbirdSelections(records) {
       linked += 1;
       if (!order.selecao_finalizada_em) {
         db.prepare(`UPDATE pedidos SET selecao_finalizada_em=?,prazo_tratamento_em=?,
-          prazo_maximo_em=?,atualizado_em=? WHERE id=?`).run(email.data_finalizacao,
+          prazo_maximo_em=?,atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(email.data_finalizacao,
           addCalendarDays(email.data_finalizacao, 20), addCalendarDays(email.data_finalizacao, 60), timestamp, order.id);
         datesSet += 1;
         insertEvent.run(id(), order.id, "selecao_email",
@@ -1136,7 +1159,7 @@ function updateMilestone(input) {
   }[deriveStage(order)];
   if (expectedField !== field)
     return { ok: false, message: "Esta ação não corresponde à etapa atual do pedido. Abra a ficha para revisar." };
-  db.prepare(`UPDATE pedidos SET ${field}=?, atualizado_em=? WHERE id=?`).run(value, now(), order.id);
+  db.prepare(`UPDATE pedidos SET ${field}=?, atualizado_em=?, revisao=revisao+1 WHERE id=?`).run(value, now(), order.id);
   if (field === "impressao_enviada_em" && !clean(order.fornecedor_impressao))
     db.prepare("UPDATE pedidos SET fornecedor_impressao='Digital Fotos' WHERE id=?").run(order.id);
   if (field === "selecao_finalizada_em") {

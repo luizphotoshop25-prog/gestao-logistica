@@ -388,7 +388,7 @@ export function App() {
   const saveOrder = async () => {
     if (!detail) return;
     setBusy(true);
-    const result = await dataService.updateOrder({ id: detail.order.id, values: form });
+    const result = await dataService.updateOrder({ id: detail.order.id, revisao: detail.order.revisao, values: form });
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível salvar o pedido.");
     setDetail(result);

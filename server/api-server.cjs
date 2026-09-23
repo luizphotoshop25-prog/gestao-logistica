@@ -62,8 +62,8 @@ function startApiServer({ userDataPath, host = "127.0.0.1", port = 0, allowedOri
       if (match && request.method === "PATCH") {
         const body = await readJson(request);
         if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) return sendJson(response, 400, errorBody("INVALID_INPUT", "values é obrigatório."), allowedOrigin);
-        const result = database.updateOrder({ id: decodeURIComponent(match[1]), values: body.values });
-        return sendJson(response, result.ok ? 200 : 400, result, allowedOrigin);
+        const result = database.updateOrder({ id: decodeURIComponent(match[1]), revisao: body.revisao, values: body.values });
+        return sendJson(response, result.ok ? 200 : result.error === "REVISION_CONFLICT" ? 409 : 400, result, allowedOrigin);
       }
       return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), allowedOrigin);
     } catch (error) {

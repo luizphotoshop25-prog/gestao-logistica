@@ -65,6 +65,11 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 - Os smokes de API, adaptador HTTP e UI HTTP usam somente `M99997` / `Cliente HTTP Teste`; encerram servidor/SQLite e removem seus temporários. SIWIN, Thunderbird, EPICS, GerenciadorFotos, anexos e caminhos reais não participam desse modo.
 - A equivalência de listagem, ficha e dashboard foi comparada com chamadas diretas ao mesmo domínio SQLite. A comparação final de ficha normaliza somente o protótipo de objeto próprio das linhas SQLite para a serialização JSON HTTP.
 
+## Concorrência otimista
+
+- Em 23/09/2026, pedidos passaram a ter a coluna compatível `revisao`, com valor inicial `1`. Leituras de ficha retornam a revisão; a atualização exige esse valor e só grava quando ele coincide com o registro atual.
+- Uma atualização aceita incrementa a revisão. Escritas por edição, marcos, ações em massa, SIWIN e Thunderbird também a incrementam. Uma gravação baseada em versão antiga retorna `REVISION_CONFLICT`; a API HTTP responde `409` e não altera o pedido. Não há repetição automática e a tentativa rejeitada não gera histórico. O smoke simultâneo HTTP foi aprovado com duas requisições concorrentes, um sucesso, um conflito, uma única incrementação e integridade SQLite confirmada.
+
 ## Próximos passos recomendados
 
 1. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.

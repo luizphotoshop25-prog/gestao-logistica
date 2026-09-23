@@ -45,8 +45,10 @@ async function main() {
       const result = database.updateMilestone({ id: orderId, field, value });
       assert.equal(result.ok, true, `${field}: ${result.message || "falhou"}`);
     }
-    assert.equal(database.updateOrder({ id: orderId, values: { codigo_rastreio: "AB123456789BR" } }).ok, true);
-    const unchanged = database.updateOrder({ id: orderId, values: { codigo_rastreio: "AB123456789BR" } });
+    let revision = database.getOrder(orderId).order.revisao;
+    assert.equal(database.updateOrder({ id: orderId, revisao: revision, values: { codigo_rastreio: "AB123456789BR" } }).ok, true);
+    revision = database.getOrder(orderId).order.revisao;
+    const unchanged = database.updateOrder({ id: orderId, revisao: revision, values: { codigo_rastreio: "AB123456789BR" } });
     assert.equal(unchanged.unchanged, true);
     const shipped = database.bulkUpdateOrders({ ids: [orderId], action: "add_shipment" });
     assert.equal(shipped.ok, true);

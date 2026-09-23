@@ -23,7 +23,8 @@
     "smoke:http": "node tests/smoke-http.cjs",
     "smoke:http-service": "node tests/smoke-http-data-service.cjs",
     "capture:http": "node tests/run-http-capture.cjs",
-    "dist": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win",
+    "smoke:http-race": "node tests/smoke-http-revision-race.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -46,10 +46,18 @@ async function main() {
     assert.deepEqual(httpDashboard, directDashboard);
     assert.equal(httpDashboard.dashboard.total, 1);
 
-    const updated = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: { observacoes: "Atualizado exclusivamente pelo smoke HTTP." } }) });
+    const revision = httpDetail.order.revisao;
+    const updated = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Atualizado exclusivamente pelo smoke HTTP." } }) });
     assert.equal(updated.ok, true);
     const persisted = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId));
     assert.equal(persisted.order.observacoes, "Atualizado exclusivamente pelo smoke HTTP.");
+    assert.equal(persisted.order.revisao, revision + 1);
+    const conflictResponse = await fetch(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Sobrescrita que não pode acontecer." } }) });
+    assert.equal(conflictResponse.status, 409);
+    const conflict = await conflictResponse.json();
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.error, "REVISION_CONFLICT");
+    assert.equal((await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId))).order.observacoes, "Atualizado exclusivamente pelo smoke HTTP.");
     assert.deepEqual(persisted, JSON.parse(JSON.stringify(database.getOrder(orderId))));
 
     console.log(JSON.stringify({ ok: true, origin: api.origin, fixture: "M99997", listEquivalent: true, detailEquivalent: true, dashboardEquivalent: true, updatePersisted: true }, null, 2));

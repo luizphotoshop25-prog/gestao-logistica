@@ -51,9 +51,11 @@ async function main() {
     assert.equal(listed.rows.length, 1);
     const id = listed.rows[0].id;
     assert.equal((await dataService.getOrder(id)).ok, true);
-    const payload = { id, values: { observacoes: "Alteracao sintetica via dataService" } };
+    const payload = { id, revisao: (await dataService.getOrder(id)).order.revisao, values: { observacoes: "Alteracao sintetica via dataService" } };
     assert.equal((await dataService.updateOrder(payload)).ok, true);
     assert.equal((await dataService.getOrder(id)).order.observacoes, payload.values.observacoes);
+    assert.equal((await dataService.updateOrder(payload)).error, "REVISION_CONFLICT");
+    payload.revisao = (await dataService.getOrder(id)).order.revisao;
     assert.equal((await dataService.updateOrder(payload)).unchanged, true);
     assert.equal((await dataService.dashboard()).dashboard.total, 1);
     console.log("19 métodos: delegação, identidade dos retornos/callbacks, erros e CRUD sintético aprovados.");

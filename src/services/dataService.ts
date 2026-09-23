@@ -66,7 +66,7 @@ export function createHttpDataService(apiUrl: string): DataService {
     prepareSelection: async () => unsupported(),
     listOrders: (options) => request(`/api/orders?search=${encodeURIComponent(options?.search || "")}&filter=${encodeURIComponent(options?.filter || "all")}`),
     getOrder: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}`),
-    updateOrder: (input) => request(`/api/orders/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ values: input.values }) }),
+    updateOrder: (input) => request(`/api/orders/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revisao: input.revisao, values: input.values }) }),
     bulkUpdateOrders: async () => unsupported(),
     markSelectionEmail: async () => unsupported(),
     listClients: async () => ({ ...unsupported(), rows: [] }),

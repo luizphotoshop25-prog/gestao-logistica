@@ -33,6 +33,7 @@ type ImportPreview = {
 
 type Order = Record<string, unknown> & {
   id: string;
+  revisao: number;
   sessao: string;
   cliente_nome: string | null;
   fotos_quantidade: number | null;
@@ -94,6 +95,8 @@ type OrderItemRow = {
 };
 type OrderDetailResult = {
   ok: boolean;
+  error?: "REVISION_REQUIRED" | "REVISION_CONFLICT";
+  revisaoAtual?: number;
   message?: string;
   unchanged?: boolean;
   order: Order & Record<string, string | number | null>;
@@ -139,7 +142,7 @@ interface Window {
     prepareSelection(emailId: string): Promise<{ ok: boolean; listPath?: string; total?: number; message?: string }>;
     listOrders(options?: { search?: string; filter?: string }): Promise<{ ok: boolean; rows: Order[] }>;
     getOrder(orderId: string): Promise<OrderDetailResult>;
-    updateOrder(input: { id: string; values: Record<string, string | number | null> }): Promise<OrderDetailResult>;
+    updateOrder(input: { id: string; revisao: number; values: Record<string, string | number | null> }): Promise<OrderDetailResult>;
     bulkUpdateOrders(input: { ids: string[]; action: string; date?: string }): Promise<{ ok: boolean; updated?: number; skipped?: number; skippedDetails?: string[]; message?: string }>;
     markSelectionEmail(input: { id: string; field: "conferida_em" | "fotos_separadas_em"; value?: string }): Promise<{ ok: boolean; message?: string }>;
     listClients(options?: { search?: string; limit?: number }): Promise<{ ok: boolean; rows: ClientRow[] }>;

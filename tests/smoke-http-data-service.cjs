@@ -27,7 +27,7 @@ async function main() {
     assert.equal((await dataService.getOrder(id)).order.cliente_nome, "Cliente HTTP Teste");
     assert.deepEqual(await dataService.getOrder("inexistente"), database.getOrder("inexistente"));
     assert.equal((await dataService.dashboard()).dashboard.total, 1);
-    assert.equal((await dataService.updateOrder({ id, values: { observacoes: "Atualizado pelo httpDataService." } })).ok, true);
+    assert.equal((await dataService.updateOrder({ id, revisao: (await dataService.getOrder(id)).order.revisao, values: { observacoes: "Atualizado pelo httpDataService." } })).ok, true);
     assert.equal((await dataService.getOrder(id)).order.observacoes, "Atualizado pelo httpDataService.");
     assert.equal((await dataService.syncSiwin()).ok, false);
     console.log("httpDataService: seleção explícita, CRUD HTTP e bloqueio de integração local aprovados.");
