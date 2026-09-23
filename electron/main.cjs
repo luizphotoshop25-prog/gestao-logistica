@@ -1,10 +1,26 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const database = require("./database.cjs");
 const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
 const thunderbird = require("./thunderbird.cjs");
+
+const httpTestMode = process.env.GESTAO_DATA_TRANSPORT === "http";
+if (httpTestMode) {
+  const profile = process.env.GESTAO_HTTP_TEST_PROFILE;
+  const apiUrl = process.env.GESTAO_API_URL || "";
+  if (app.isPackaged || !profile || !path.isAbsolute(profile)) throw new Error("HTTP exige desenvolvimento com perfil temporário explícito.");
+  const parent = fs.realpathSync(path.dirname(profile));
+  const temporary = fs.realpathSync(os.tmpdir());
+  const relative = path.relative(temporary, parent);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Perfil HTTP fora do diretório temporário.");
+  if (fs.existsSync(profile) && fs.lstatSync(profile).isSymbolicLink()) throw new Error("Perfil HTTP não pode ser link.");
+  const target = new URL(apiUrl);
+  if (target.protocol !== "http:" || target.hostname !== "127.0.0.1" || target.origin !== apiUrl) throw new Error("API HTTP deve ser uma origem loopback explícita.");
+  app.setPath("userData", profile);
+}
 
 let mainWindow;
 let siwinTimer;
@@ -16,6 +32,7 @@ function trusted(event) {
 
 function handle(channel, callback) {
   ipcMain.handle(channel, async (event, ...args) => {
+    if (httpTestMode) return { ok: false, message: "IPC local indisponível no protótipo HTTP." };
     if (!trusted(event)) return { ok: false, message: "Origem não autorizada." };
     try {
       return await callback(...args);
@@ -133,9 +150,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  database.initialize(app);
+  if (!httpTestMode) database.initialize(app);
   registerIpc();
   createWindow();
+  if (httpTestMode) return;
   setTimeout(async () => {
     await runSiwinSync();
     runThunderbirdSync();

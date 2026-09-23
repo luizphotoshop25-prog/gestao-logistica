@@ -42,4 +42,42 @@ export const ipcDataService: DataService = {
   openExternal: (url) => window.gestaoAPI.openExternal(url),
 };
 
-export const dataService: DataService = ipcDataService;
+const unsupportedMessage = "Indisponível no transporte HTTP de protótipo.";
+const unsupported = () => ({ ok: false, message: unsupportedMessage });
+
+export function createHttpDataService(apiUrl: string): DataService {
+  const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    if (!apiUrl.startsWith("http://127.0.0.1:") || !/^[0-9]+$/.test(apiUrl.slice(17))) throw new Error("API HTTP de teste não configurada em loopback.");
+    const response = await fetch(apiUrl + path, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    });
+    const body = await response.json();
+    return body;
+  };
+
+  return {
+    dashboard: () => request("/api/dashboard"),
+    siwinStatus: async () => ({ ok: false, lastCad: 0, lastSync: null, lastImported: 0 }),
+    syncSiwin: async () => ({ ...unsupported(), imported: 0, updated: 0, total: 0, importedOrders: 0, updatedOrders: 0, syncedItems: 0, scopedClients: 0, linked: 0, unmatched: 0 }),
+    syncThunderbird: async () => ({ ...unsupported(), imported: 0, linked: 0, datesSet: 0, unmatched: 0, total: 0 }),
+    onSiwinUpdated: () => () => {},
+    onThunderbirdUpdated: () => () => {},
+    prepareSelection: async () => unsupported(),
+    listOrders: (options) => request(`/api/orders?search=${encodeURIComponent(options?.search || "")}&filter=${encodeURIComponent(options?.filter || "all")}`),
+    getOrder: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}`),
+    updateOrder: (input) => request(`/api/orders/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ values: input.values }) }),
+    bulkUpdateOrders: async () => unsupported(),
+    markSelectionEmail: async () => unsupported(),
+    listClients: async () => ({ ...unsupported(), rows: [] }),
+    updateMilestone: async () => unsupported(),
+    selectSpreadsheet: async () => ({ ...unsupported(), total: 0, eligible: 0, blocked: 0, missingClient: 0, trackingWithoutDate: 0, rows: [] }),
+    confirmImport: async () => ({ ...unsupported(), imported: 0, skipped: 0 }),
+    addAttachment: async () => unsupported(),
+    openAttachment: async () => unsupported(),
+    openExternal: async () => unsupported(),
+  };
+}
+
+export const httpDataService: DataService = createHttpDataService(window.gestaoConfig?.apiUrl || "");
+export const dataService: DataService = window.gestaoConfig?.dataTransport === "http" ? httpDataService : ipcDataService;

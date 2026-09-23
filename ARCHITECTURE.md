@@ -4,9 +4,13 @@ _Reconstruída a partir do código em 23/09/2026._
 
 ## Componentes
 
-Fluxo: React → `dataService` → `ipcDataService` → `window.gestaoAPI` → preload → IPC → main → domínio/banco.
+Fluxo padrão: React → `dataService` → `ipcDataService` → `window.gestaoAPI` → preload → IPC → main → domínio/banco.
 
-`src/services/dataService.ts` reutiliza as assinaturas existentes de `src/global.d.ts`. O adaptador apenas delega argumentos, retornos e callbacks, sem capturar erros ou transformar payloads. Um futuro adaptador HTTP poderá implementar esse contrato; não existe transporte HTTP nesta fase.
+O protótipo HTTP de teste oferece um segundo caminho: `dataService` → `httpDataService` → API HTTP em `127.0.0.1` → `electron/database.cjs` → SQLite temporário. O seletor explícito exposto pelo preload usa `GESTAO_DATA_TRANSPORT=http` e `GESTAO_API_URL`; sem essa configuração o IPC continua sendo o padrão.
+
+`src/services/dataService.ts` reutiliza as assinaturas existentes de `src/global.d.ts`. O adaptador IPC delega argumentos, retornos e callbacks sem transformação. O adaptador HTTP implementa somente listagem, ficha, dashboard e atualização; integrações, arquivos e ações específicas do cliente retornam indisponibilidade previsível, sem fallback para IPC.
+
+`server/api-server.cjs` usa somente `node:http`, exige um `userDataPath` absoluto e explícito, recusa host diferente de `127.0.0.1` e disponibiliza `GET /health`, `GET /api/orders`, `GET /api/orders/:id`, `GET /api/dashboard` e `PATCH /api/orders/:id`. Ele reutiliza diretamente as regras existentes em `electron/database.cjs`; não há alteração de schema ou duplicação de regras.
 
 ## Camadas
 

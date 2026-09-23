@@ -30,3 +30,8 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   openAttachment: (attachmentId) => ipcRenderer.invoke("attachments:open", attachmentId),
   openExternal: (url) => ipcRenderer.invoke("external:open", url),
 });
+
+contextBridge.exposeInMainWorld("gestaoConfig", {
+  dataTransport: process.env.GESTAO_DATA_TRANSPORT === "http" ? "http" : "ipc",
+  apiUrl: process.env.GESTAO_DATA_TRANSPORT === "http" ? process.env.GESTAO_API_URL || "" : "",
+});

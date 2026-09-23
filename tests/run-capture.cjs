@@ -17,6 +17,7 @@ async function main() {
     const origin = `http://127.0.0.1:${port}`;
     const env = { ...process.env, GESTAO_CAPTURE_PROFILE: root, GESTAO_DEV_SERVER_URL: origin, GESTAO_CAPTURE_PORT: String(port) };
     delete env.ELECTRON_RUN_AS_NODE;
+    env.GESTAO_DATA_TRANSPORT = "ipc";
     await new Promise((resolve, reject) => {
       const electron = spawn(require("electron"), [path.join(__dirname, "capture-ui.cjs")], { env, stdio: "inherit", windowsHide: true });
       let expired = false;

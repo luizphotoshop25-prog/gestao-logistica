@@ -11,6 +11,12 @@ const resolvedProfilePath = path.resolve(profilePath);
 const devServerUrl = process.env.GESTAO_DEV_SERVER_URL;
 if (!devServerUrl || !/^http:\/\/127\.0\.0\.1:\d+$/.test(devServerUrl)) throw new Error("Origem local dinâmica ausente ou inválida.");
 const devServerHost = new URL(devServerUrl).host;
+const httpTransport = process.env.GESTAO_DATA_TRANSPORT === "http";
+const apiUrl = process.env.GESTAO_API_URL || "";
+if (httpTransport && !/^http:\/\/127\.0\.0\.1:\d+$/.test(apiUrl)) throw new Error("API loopback HTTP ausente ou inválida.");
+const apiHost = httpTransport ? new URL(apiUrl).host : "";
+const expectedSession = process.env.GESTAO_CAPTURE_SESSION || "M99999";
+const expectedClientName = process.env.GESTAO_CAPTURE_CLIENT_NAME || "Cliente Teste Visual";
 const outputPath = process.env.GESTAO_CAPTURE_PATH || path.join(projectRoot, "work", "gestao-logistica-ui.png");
 const menuOutputPath = outputPath.replace(/\.png$/i, "-menu.png");
 const detailOutputPath = outputPath.replace(/\.png$/i, "-pedido.png");
@@ -25,6 +31,7 @@ if (resolvedProfilePath === realProfilePath || !resolvedProfilePath.startsWith(`
 }
 
 database.initialize = (electronApp) => {
+  if (httpTransport) throw new Error("O cliente HTTP não deve abrir SQLite local.");
   const activeProfilePath = path.resolve(electronApp.getPath("userData"));
   if (activeProfilePath !== resolvedProfilePath) throw new Error(`Captura visual recusada: userData inesperado (${activeProfilePath}).`);
   initializeDatabase(electronApp);
@@ -64,6 +71,7 @@ app.setPath("userData", profilePath);
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
 const allowedChannels = new Set(["app:status", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status"]);
+if (httpTransport) allowedChannels.clear();
 const registerHandler = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => registerHandler(channel, allowedChannels.has(channel) ? handler : () => {
   fail(new Error(`IPC externo ou de escrita bloqueado: ${channel}`));
@@ -85,7 +93,7 @@ app.on("web-contents-created", (_event, contents) => {
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     const url = new URL(details.url);
-    const allowed = ["http:", "ws:"].includes(url.protocol) && url.host === devServerHost;
+    const allowed = ["http:", "ws:"].includes(url.protocol) && [devServerHost, apiHost].includes(url.host);
     callback({ cancel: !allowed && !["data:", "devtools:"].includes(url.protocol) });
   });
 });
@@ -99,7 +107,7 @@ app.whenReady().then(() => {
     nativeSetTimeout(async () => {
       try {
         await waitForSelector(window, ".session-link");
-        const visible = await window.webContents.executeJavaScript("document.body.innerText.includes('M99999') && document.body.innerText.includes('Cliente Teste Visual') && typeof window.gestaoAPI.getOrder === 'function'");
+        const visible = await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(expectedSession)}) && document.body.innerText.includes(${JSON.stringify(expectedClientName)}) && typeof window.gestaoAPI.getOrder === "function" && (!${httpTransport} || window.gestaoConfig.dataTransport === "http")`);
         if (!visible) throw new Error("Fixture ou preload ausente.");
         await capture(window, outputPath);
         await window.webContents.executeJavaScript("document.querySelector('.integration-trigger')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))");

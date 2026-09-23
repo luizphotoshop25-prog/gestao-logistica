@@ -58,6 +58,13 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 - As auditorias `AUDITORIA_2026-08-22.md` e `AUDITORIA_FRONTEND_2026-08-23.md` foram preservadas como evidência histórica.
 - Em 23/09/2026, `npm run check` passou. Build não foi executado porque altera `dist/`; os smokes criam seus próprios dados temporários e a captura grava imagens ignoradas em `work/`.
 
+## Protótipo HTTP de teste
+
+- Em 23/09/2026 foi aprovado um transporte HTTP local e independente para fixture SQLite sintético. A API usa exclusivamente `127.0.0.1`, porta dinâmica e `userDataPath` temporário explícito; não há fallback para o perfil de produção.
+- `DataService` mantém IPC como padrão. Com `GESTAO_DATA_TRANSPORT=http` e `GESTAO_API_URL` loopback explícita, a UI usa HTTP para listar pedidos, abrir ficha, consultar dashboard e atualizar pedido.
+- Os smokes de API, adaptador HTTP e UI HTTP usam somente `M99997` / `Cliente HTTP Teste`; encerram servidor/SQLite e removem seus temporários. SIWIN, Thunderbird, EPICS, GerenciadorFotos, anexos e caminhos reais não participam desse modo.
+- A equivalência de listagem, ficha e dashboard foi comparada com chamadas diretas ao mesmo domínio SQLite. A comparação final de ficha normaliza somente o protótipo de objeto próprio das linhas SQLite para a serialização JSON HTTP.
+
 ## Próximos passos recomendados
 
 1. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.

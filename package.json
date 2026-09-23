@@ -20,6 +20,9 @@
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/database.cjs && node --check electron/importer.cjs && node --check electron/siwin.cjs && node --check electron/thunderbird.cjs",
     "capture:ui": "node tests/run-capture.cjs",
+    "smoke:http": "node tests/smoke-http.cjs",
+    "smoke:http-service": "node tests/smoke-http-data-service.cjs",
+    "capture:http": "node tests/run-http-capture.cjs",
     "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {

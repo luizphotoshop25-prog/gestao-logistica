@@ -127,6 +127,7 @@ interface DashboardSummary {
 }
 
 interface Window {
+  gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
   gestaoAPI: {
     status(): Promise<Record<string, unknown>>;
     dashboard(): Promise<{ ok: boolean; dashboard: DashboardSummary }>;
