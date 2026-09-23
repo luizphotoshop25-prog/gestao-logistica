@@ -57,13 +57,19 @@ const unsupported = () => ({ ok: false, message: unsupportedMessage });
 export function createHttpDataService(apiUrl: string): DataService {
   let sessionToken = "";
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-    if (!apiUrl.startsWith("http://127.0.0.1:") || !/^[0-9]+$/.test(apiUrl.slice(17))) throw new Error("API HTTP de teste não configurada em loopback.");
-    const response = await fetch(apiUrl + path, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(init?.headers || {}) },
-    });
-    const body = await response.json();
-    return body;
+    let target: URL;
+    try { target = new URL(apiUrl); } catch { throw new Error("URL da API do Gestão Logística não configurada."); }
+    if (target.protocol !== "http:" || target.origin !== apiUrl || !target.port) throw new Error("URL da API do Gestão Logística inválida.");
+    try {
+      const response = await fetch(apiUrl + path, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(init?.headers || {}) },
+      });
+      return await response.json();
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error("Não foi possível conectar ao servidor do Gestão Logística.");
+      throw error;
+    }
   };
 
   return {

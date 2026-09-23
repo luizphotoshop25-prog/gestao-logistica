@@ -52,24 +52,37 @@ async function requireSession(request) {
   return user && user.ativo ? user : null;
 }
 
-function startApiServer({ userDataPath, host = "127.0.0.1", port = 0, allowedOrigin = "" } = {}) {
-  if (!userDataPath || !path.isAbsolute(userDataPath)) throw new Error("userDataPath absoluto é obrigatório.");
-  if (host !== "127.0.0.1") throw new Error("A API protótipo aceita somente loopback.");
+function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0, allowedOrigin = "", lanPilot = false } = {}) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
+  if (lanPilot) {
+    if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("dataDirectory absoluto é obrigatório no modo LAN.");
+    if (!host || host === "127.0.0.1" || port === 0) throw new Error("Modo LAN exige host explícito e porta estável.");
+  } else {
+    if (!userDataPath || !path.isAbsolute(userDataPath)) throw new Error("userDataPath absoluto é obrigatório.");
+    if (host !== "127.0.0.1") throw new Error("Host de rede exige modo LAN explícito.");
+  }
   if (active) throw new Error("Somente uma API pode operar por processo.");
-  const resolvedPath = path.resolve(userDataPath);
-  const relativePath = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(path.dirname(resolvedPath)));
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) throw new Error("userDataPath deve ficar no diretório temporário.");
-  if (fs.existsSync(resolvedPath) && fs.lstatSync(resolvedPath).isSymbolicLink()) throw new Error("userDataPath não pode ser link simbólico.");
+  const resolvedPath = path.resolve(lanPilot ? dataDirectory : userDataPath);
+  if (!lanPilot) {
+    const relativePath = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(path.dirname(resolvedPath)));
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) throw new Error("userDataPath deve ficar no diretório temporário.");
+  }
+  if (fs.existsSync(resolvedPath) && fs.lstatSync(resolvedPath).isSymbolicLink()) throw new Error("Diretório de dados não pode ser link simbólico.");
   active = true;
-  try { database.initialize({ getPath: () => resolvedPath }); } catch (error) { active = false; database.close(); throw error; }
+  try {
+    if (lanPilot) database.initializeDataDirectory(resolvedPath);
+    else database.initialize({ getPath: () => resolvedPath });
+  } catch (error) { active = false; database.close(); throw error; }
 
   const server = http.createServer(async (request, response) => {
     const requestOrigin = request.headers.origin || "";
+    const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
+    const responseOrigin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : "";
     const errorBody = (error, message) => ({ error, message });
-    if (requestOrigin && requestOrigin !== allowedOrigin) return sendJson(response, 403, errorBody("ORIGIN_NOT_ALLOWED", "Origem não permitida."));
+    if (requestOrigin && !responseOrigin) return sendJson(response, 403, errorBody("ORIGIN_NOT_ALLOWED", "Origem não permitida."));
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
-      if (allowedOrigin) response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      if (responseOrigin) response.setHeader("Access-Control-Allow-Origin", responseOrigin);
       response.setHeader("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       response.setHeader("Access-Control-Allow-Private-Network", "true");
@@ -77,54 +90,55 @@ function startApiServer({ userDataPath, host = "127.0.0.1", port = 0, allowedOri
     }
     const url = new URL(request.url, "http://127.0.0.1");
     try {
-      if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true }, allowedOrigin);
+      if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true, database: "available" }, responseOrigin);
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
         const body = await readJson(request);
         const user = database.getUserForLogin(body.usuario);
-        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) return sendJson(response, 401, { ok: false, message: "Usuário ou senha inválidos." }, allowedOrigin);
+        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) return sendJson(response, 401, { ok: false, message: "Usuário ou senha inválidos." }, responseOrigin);
         const token = crypto.randomBytes(32).toString("base64url");
         const expiraEm = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
         database.createSession({ usuarioId: user.id, tokenHash: hashToken(token), expiraEm });
-        return sendJson(response, 200, { ok: true, user: publicUser(user), session: token, expiraEm }, allowedOrigin);
+        return sendJson(response, 200, { ok: true, user: publicUser(user), session: token, expiraEm }, responseOrigin);
       }
       if (request.method === "POST" && url.pathname === "/api/auth/logout") {
         const token = readBearer(request);
         if (token) database.revokeSession(hashToken(token));
-        return sendJson(response, 200, { ok: true }, allowedOrigin);
+        return sendJson(response, 200, { ok: true }, responseOrigin);
       }
       if (request.method === "GET" && url.pathname === "/api/auth/current") {
         const user = await requireSession(request);
-        return user ? sendJson(response, 200, { ok: true, user: publicUser(user) }, allowedOrigin) : sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, allowedOrigin);
+        return user ? sendJson(response, 200, { ok: true, user: publicUser(user) }, responseOrigin) : sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
       }
       const currentUser = await requireSession(request);
-      if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, allowedOrigin);
+      if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
       if (request.method === "GET" && url.pathname === "/api/orders") {
         const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all" });
-        return sendJson(response, 200, { ok: true, rows }, allowedOrigin);
+        return sendJson(response, 200, { ok: true, rows }, responseOrigin);
       }
-      if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, allowedOrigin);
+      if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, responseOrigin);
       const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
       if (match && request.method === "GET") {
         const result = database.getOrder(decodeURIComponent(match[1]));
-        return sendJson(response, result.ok ? 200 : 404, result, allowedOrigin);
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
       }
       if (match && request.method === "PATCH") {
         const body = await readJson(request);
-        if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) return sendJson(response, 400, errorBody("INVALID_INPUT", "values é obrigatório."), allowedOrigin);
+        if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) return sendJson(response, 400, errorBody("INVALID_INPUT", "values é obrigatório."), responseOrigin);
         const result = database.updateOrder({ id: decodeURIComponent(match[1]), revisao: body.revisao, values: body.values, usuarioId: currentUser.id });
-        return sendJson(response, result.ok ? 200 : result.error === "REVISION_CONFLICT" ? 409 : 400, result, allowedOrigin);
+        return sendJson(response, result.ok ? 200 : result.error === "REVISION_CONFLICT" ? 409 : 400, result, responseOrigin);
       }
-      return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), allowedOrigin);
+      return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
     } catch (error) {
       const statusCode = error.code === "INVALID_JSON" ? 400 : error.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
-      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", error.message || "Erro interno."), allowedOrigin);
+      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", error.message || "Erro interno."), responseOrigin);
     }
   });
 
   return new Promise((resolve, reject) => {
-    server.once("error", reject);
+    const fail = (error) => { database.close(); active = false; reject(error); };
+    server.once("error", fail);
     server.listen(port, host, () => {
-      server.removeListener("error", reject);
+      server.removeListener("error", fail);
       const address = server.address();
       resolve({ host, port: address.port, origin: `http://${host}:${address.port}`, close: async () => { await new Promise((done) => server.close(done)); database.close(); active = false; } });
     });

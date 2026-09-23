@@ -18,7 +18,7 @@ async function main() {
     assert.equal(imported.ok, true);
     const source = fs.readFileSync(path.join(__dirname, "../src/services/dataService.ts"), "utf8");
     const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
-    const context = { exports: {}, fetch, URLSearchParams, window: { gestaoAPI: {}, gestaoConfig: { dataTransport: "http", apiUrl: api.origin } } };
+    const context = { exports: {}, fetch, URL, URLSearchParams, window: { gestaoAPI: {}, gestaoConfig: { dataTransport: "http", apiUrl: api.origin } } };
     vm.runInNewContext(compiled, context);
     const { dataService, httpDataService, ipcDataService } = context.exports;
     assert.equal(dataService, httpDataService);

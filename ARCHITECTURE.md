@@ -8,9 +8,17 @@ Fluxo padrão: React → `dataService` → `ipcDataService` → `window.gestaoAP
 
 O protótipo HTTP de teste oferece um segundo caminho: `dataService` → `httpDataService` → API HTTP em `127.0.0.1` → `electron/database.cjs` → SQLite temporário. O seletor explícito exposto pelo preload usa `GESTAO_DATA_TRANSPORT=http` e `GESTAO_API_URL`; sem essa configuração o IPC continua sendo o padrão.
 
+O modo `LAN PILOT` é iniciado separadamente com `npm run server:lan`. Ele exige `GESTAO_SERVER_DATA`, `GESTAO_API_HOST` e `GESTAO_API_PORT`, usa um único SQLite central e não inicializa Electron, SIWIN, Thunderbird, EPICS ou GerenciadorFotos. Loopback e portas dinâmicas continuam sendo o padrão dos testes automatizados.
+
+Fluxo LAN: Electron cliente → Login → Sessão → DataService HTTP → API LAN → Usuário autenticado → Domínio → SQLite piloto.
+
+O cliente remoto lê `gestao-client.json` por `GESTAO_CLIENT_CONFIG`, portanto IP e porta podem mudar sem recompilação. O arquivo exige transporte HTTP, origem privada com porta e `mode: "lan-pilot"`. Nesse modo o Electron não inicializa SQLite local nem oferece fallback para IPC.
+
 `src/services/dataService.ts` reutiliza as assinaturas existentes de `src/global.d.ts`. O adaptador IPC delega argumentos, retornos e callbacks sem transformação. O adaptador HTTP implementa somente listagem, ficha, dashboard e atualização; integrações, arquivos e ações específicas do cliente retornam indisponibilidade previsível, sem fallback para IPC.
 
 `server/api-server.cjs` usa somente módulos nativos, exige um `userDataPath` absoluto e explícito, recusa host diferente de `127.0.0.1` e disponibiliza autenticação simples, além das rotas de pedidos e dashboard. `GET /health` é público; as rotas operacionais exigem token de sessão válido. A API reutiliza diretamente as regras existentes em `electron/database.cjs`.
+
+Para o piloto LAN, `server/lan-server.cjs` habilita explicitamente host de rede e porta estável. `GESTAO_SERVER_DATA` aponta diretamente para o diretório que contém `gestao-logistica.sqlite3`, `backups/` e `comprovantes/`. O health check informa apenas disponibilidade da API e do banco.
 
 ## Camadas
 

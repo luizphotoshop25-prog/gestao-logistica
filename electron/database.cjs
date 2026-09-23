@@ -35,7 +35,12 @@ function addCalendarDays(isoDate, days) {
 }
 
 function initialize(app) {
-  dataDirectory = path.join(app.getPath("userData"), "GestaoLogistica");
+  return initializeDataDirectory(path.join(app.getPath("userData"), "GestaoLogistica"));
+}
+
+function initializeDataDirectory(directory) {
+  if (!directory || !path.isAbsolute(directory)) throw new Error("Diretório de dados absoluto é obrigatório.");
+  dataDirectory = path.resolve(directory);
   fs.mkdirSync(path.join(dataDirectory, "backups"), { recursive: true });
   fs.mkdirSync(path.join(dataDirectory, "comprovantes"), { recursive: true });
   db = new DatabaseSync(path.join(dataDirectory, "gestao-logistica.sqlite3"));
@@ -1251,6 +1256,7 @@ function setUserActive(userId, active) {
 
 module.exports = {
   initialize,
+  initializeDataDirectory,
   close,
   getStatus,
   listOrders,

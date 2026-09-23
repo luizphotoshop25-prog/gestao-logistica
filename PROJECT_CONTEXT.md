@@ -73,6 +73,9 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 - Senhas são armazenadas somente como hash `scrypt` com sal aleatório. O login HTTP cria um token aleatório de sessão com validade de 12 horas; somente seu hash SHA-256 é persistido. Logout, expiração ou desativação do usuário invalidam o acesso.
 - As rotas operacionais HTTP exigem sessão válida; `GET /health` permanece público. O Electron guarda o token criptografado com `safeStorage`, fora de `localStorage`, e o mantém apenas em memória no adaptador HTTP.
 - A autoria de `updateOrder` é derivada exclusivamente da sessão validada no servidor. Eventos antigos e eventos originados por fluxos sem usuário continuam válidos com autoria nula. O smoke confirmou autoria por dois usuários e ausência de evento para uma tentativa rejeitada por conflito.
+- O modo explícito `LAN PILOT` permite uma API única em host e porta configuráveis, usando um diretório central independente do `userData` do Electron. O padrão de testes permanece em `127.0.0.1` com dados temporários.
+- O cliente HTTP aceita configuração externa por arquivo, sem recompilação, e não inicializa SQLite local nem retorna silenciosamente ao IPC. Falhas de conexão produzem mensagem controlada e opção de nova tentativa.
+- Em 23/09/2026 foi criada uma cópia consistente do banco operacional em `E:\GestaoLogistica_Server_Pilot\data` por `VACUUM INTO`, seguida de backup preventivo e inicialização oficial. A integridade e as colunas de revisão, usuários, sessões e autoria foram confirmadas somente nessa cópia; o banco original não foi aberto para escrita.
 
 ## Próximos passos recomendados
 

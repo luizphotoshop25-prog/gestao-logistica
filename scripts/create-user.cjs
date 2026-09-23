@@ -5,9 +5,13 @@ const database = require("../electron/database.cjs");
 const { createPasswordHash } = require("../server/api-server.cjs");
 
 async function main() {
+  const dataDirectory = process.env.GESTAO_SERVER_DATA;
   const userDataPath = process.env.GESTAO_USER_DATA;
-  if (!userDataPath || !path.isAbsolute(userDataPath)) throw new Error("GESTAO_USER_DATA absoluto é obrigatório.");
-  database.initialize({ getPath: () => userDataPath });
+  if (dataDirectory) database.initializeDataDirectory(dataDirectory);
+  else {
+    if (!userDataPath || !path.isAbsolute(userDataPath)) throw new Error("GESTAO_SERVER_DATA ou GESTAO_USER_DATA absoluto é obrigatório.");
+    database.initialize({ getPath: () => userDataPath });
+  }
   const terminal = readline.createInterface({ input: stdin, output: stdout });
   try {
     const nome = (await terminal.question("Nome: ")).trim();
