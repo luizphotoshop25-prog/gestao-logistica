@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dataService } from "./services/dataService";
 import {
   Activity,
   AlertCircle,
@@ -163,8 +164,8 @@ export function App() {
     setInitialLoading(true);
     try {
       const [ordersResult, dashboardResult] = await Promise.all([
-        window.gestaoAPI.listOrders({ search, filter: search.trim() ? "all" : filter }),
-        window.gestaoAPI.dashboard(),
+        dataService.listOrders({ search, filter: search.trim() ? "all" : filter }),
+        dataService.dashboard(),
       ]);
       if (requestId !== listRequestRef.current) return;
       if (ordersResult.ok) setOrders(ordersResult.rows);
@@ -186,7 +187,7 @@ export function App() {
     let current = true;
     const timer = window.setTimeout(async () => {
       if (!commandQuery.trim()) return setCommandResults([]);
-      const result = await window.gestaoAPI.listOrders({ search: commandQuery, filter: "all" });
+      const result = await dataService.listOrders({ search: commandQuery, filter: "all" });
       if (current && result.ok) setCommandResults(result.rows.slice(0, 8));
     }, 140);
     return () => { current = false; window.clearTimeout(timer); };
@@ -220,7 +221,7 @@ export function App() {
   useEffect(() => {
     if (!showClients) return;
     const timer = window.setTimeout(async () => {
-      const result = await window.gestaoAPI.listClients({ search: clientSearch, limit: 200 });
+      const result = await dataService.listClients({ search: clientSearch, limit: 200 });
       if (result.ok) setClients(result.rows);
     }, 180);
     return () => window.clearTimeout(timer);
@@ -232,19 +233,19 @@ export function App() {
   }, [reload]);
 
   useEffect(() => {
-    void window.gestaoAPI.siwinStatus().then((result) => {
+    void dataService.siwinStatus().then((result) => {
       if (result.ok) setLastSiwinSync(result.lastSync);
     });
   }, []);
 
-  useEffect(() => window.gestaoAPI.onSiwinUpdated((result) => {
+  useEffect(() => dataService.onSiwinUpdated((result) => {
     if (result.ok && (result.imported > 0 || result.importedOrders > 0 || result.linked > 0)) {
       setNotice(`${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`);
       void reload();
     }
   }), [reload]);
 
-  useEffect(() => window.gestaoAPI.onThunderbirdUpdated((result) => {
+  useEffect(() => dataService.onThunderbirdUpdated((result) => {
     if (result.ok && result.imported > 0) {
       setNotice(`${result.imported} nova(s) seleção(ões) recebida(s) por e-mail; ${result.datesSet} data(s) registrada(s).`);
       void reload();
@@ -254,7 +255,7 @@ export function App() {
   const syncSiwin = async () => {
     setBusy(true);
     setNotice("");
-    const result = await window.gestaoAPI.syncSiwin();
+    const result = await dataService.syncSiwin();
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível sincronizar com o SIWIN.");
     setLastSiwinSync(new Date().toISOString());
@@ -267,7 +268,7 @@ export function App() {
   const syncThunderbird = async () => {
     setBusy(true);
     setNotice("");
-    const result = await window.gestaoAPI.syncThunderbird();
+    const result = await dataService.syncThunderbird();
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível verificar os e-mails da EPICS.");
     setNotice(result.imported
@@ -278,7 +279,7 @@ export function App() {
 
   const prepareSelection = async (emailId: string) => {
     setBusy(true);
-    const result = await window.gestaoAPI.prepareSelection(emailId);
+    const result = await dataService.prepareSelection(emailId);
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível preparar a lista de fotos.");
     setNotice(`${result.total} código(s) enviados ao GerenciadorFotos.`);
@@ -287,7 +288,7 @@ export function App() {
   const markSelection = async (emailId: string, field: "conferida_em" | "fotos_separadas_em") => {
     if (!detail) return;
     setBusy(true);
-    const result = await window.gestaoAPI.markSelectionEmail({ id: emailId, field });
+    const result = await dataService.markSelectionEmail({ id: emailId, field });
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível atualizar a seleção.");
     await openOrder(detail.order.id);
@@ -296,7 +297,7 @@ export function App() {
 
   const performBulkAction = async (action: string, ids = selectedIds) => {
     setBusy(true);
-    const result = await window.gestaoAPI.bulkUpdateOrders({ ids, action });
+    const result = await dataService.bulkUpdateOrders({ ids, action });
     setBusy(false);
     setNotice(result.message || (result.ok ? "Pedidos atualizados." : "Não foi possível atualizar os pedidos."));
     if (result.ok) await reload();
@@ -328,7 +329,7 @@ export function App() {
   const openImport = async () => {
     setBusy(true);
     setNotice("");
-    const result = await window.gestaoAPI.selectSpreadsheet();
+    const result = await dataService.selectSpreadsheet();
     setBusy(false);
     if (result.ok) setPreview(result);
     else if (!result.canceled) setNotice(result.message || "Não foi possível ler a planilha.");
@@ -337,7 +338,7 @@ export function App() {
   const confirmImport = async () => {
     if (!preview) return;
     setBusy(true);
-    const result = await window.gestaoAPI.confirmImport(preview);
+    const result = await dataService.confirmImport(preview);
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "A importação falhou.");
     setNotice(`${result.imported} sessões importadas; ${result.skipped} já existentes ignoradas.`);
@@ -349,7 +350,7 @@ export function App() {
     const action = nextActions[order.etapa];
     if (!action) return;
     setBusy(true);
-    const result = await window.gestaoAPI.updateMilestone({ id: order.id, field: action.field });
+    const result = await dataService.updateMilestone({ id: order.id, field: action.field });
     setBusy(false);
     setNotice(result.ok ? `${action.label} na sessão ${order.sessao}.` : result.message || "Não foi possível atualizar a etapa.");
     if (result.ok) await reload();
@@ -363,7 +364,7 @@ export function App() {
 
   const openOrder = async (orderId: string) => {
     setBusy(true);
-    const result = await window.gestaoAPI.getOrder(orderId);
+    const result = await dataService.getOrder(orderId);
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível abrir o pedido.");
     setDetail(result);
@@ -387,7 +388,7 @@ export function App() {
   const saveOrder = async () => {
     if (!detail) return;
     setBusy(true);
-    const result = await window.gestaoAPI.updateOrder({ id: detail.order.id, values: form });
+    const result = await dataService.updateOrder({ id: detail.order.id, values: form });
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível salvar o pedido.");
     setDetail(result);
@@ -436,7 +437,7 @@ export function App() {
 
   const attach = async (type: string) => {
     if (!detail) return;
-    const result = await window.gestaoAPI.addAttachment(detail.order.id, type);
+    const result = await dataService.addAttachment(detail.order.id, type);
     if (!result.ok && !result.canceled) return setNotice(result.message || "Não foi possível anexar o arquivo.");
     if (result.ok) await openOrder(detail.order.id);
   };
@@ -782,7 +783,7 @@ export function App() {
               <section className="form-section span-2 detail-pane pane-selection">
                 <h3>Galeria e envio ao cliente</h3>
                 <div className="field-grid three">
-                  <label className="span-2">URL da galeria<div className="input-action"><input value={form.galeria_url || ""} onChange={(event) => setForm({ ...form, galeria_url: event.target.value })} placeholder="https://..." />{form.galeria_url && <button onClick={() => window.gestaoAPI.openExternal(form.galeria_url)} title="Abrir link"><ExternalLink size={17} /></button>}</div></label>
+                  <label className="span-2">URL da galeria<div className="input-action"><input value={form.galeria_url || ""} onChange={(event) => setForm({ ...form, galeria_url: event.target.value })} placeholder="https://..." />{form.galeria_url && <button onClick={() => dataService.openExternal(form.galeria_url)} title="Abrir link"><ExternalLink size={17} /></button>}</div></label>
                   <label>Galeria publicada em<input type="date" value={form.galeria_publicada_em || ""} onChange={(event) => setForm({ ...form, galeria_publicada_em: event.target.value })} /></label>
                   <label>Link enviado à cliente em<input type="date" value={form.link_enviado_em || ""} onChange={(event) => setForm({ ...form, link_enviado_em: event.target.value })} /></label>
                   <button className="attachment-button" onClick={() => attach("comprovante_whatsapp")}><Paperclip size={16} /> Anexar comprovante do WhatsApp</button>
@@ -826,7 +827,7 @@ export function App() {
             </div>
 
             <div className="detail-bottom detail-pane pane-history">
-              <section><h3>Anexos</h3>{detail.attachments.length ? detail.attachments.map((item) => <button className="file-row" key={item.id} onClick={() => window.gestaoAPI.openAttachment(item.id)}><Paperclip size={14} /><span>{item.nome_arquivo}</span><small>{item.tipo}</small></button>) : <p>Nenhum arquivo anexado.</p>}</section>
+              <section><h3>Anexos</h3>{detail.attachments.length ? detail.attachments.map((item) => <button className="file-row" key={item.id} onClick={() => dataService.openAttachment(item.id)}><Paperclip size={14} /><span>{item.nome_arquivo}</span><small>{item.tipo}</small></button>) : <p>Nenhum arquivo anexado.</p>}</section>
               <section><h3>Histórico</h3><div className="event-list">{detail.events.length ? detail.events.map((item) => <div key={item.id}><span>{item.descricao}</span><small>{new Date(item.criado_em).toLocaleString("pt-BR")}</small></div>) : <p>Nenhum evento registrado.</p>}</div></section>
             </div>
             <footer><span className={`save-state ${formDirty ? "dirty" : ""}`}>{formDirty ? "Alterações não salvas" : "Dados salvos"}</span><button className="secondary" onClick={closeOrder}>Fechar</button><button className="primary" onClick={saveOrder} disabled={busy || !formDirty}><Save size={17} /> Salvar alterações</button></footer>

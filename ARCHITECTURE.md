@@ -4,7 +4,9 @@ _Reconstruída a partir do código em 23/09/2026._
 
 ## Componentes
 
-`src/` (React/Vite) chama `window.logistica`, exposta por `electron/preload.cjs`; o preload usa IPC para `electron/main.cjs`, que orquestra SQLite local, CSV/XLSX, SIWIN e Thunderbird.
+Fluxo: React → `dataService` → `ipcDataService` → `window.gestaoAPI` → preload → IPC → main → domínio/banco.
+
+`src/services/dataService.ts` reutiliza as assinaturas existentes de `src/global.d.ts`. O adaptador apenas delega argumentos, retornos e callbacks, sem capturar erros ou transformar payloads. Um futuro adaptador HTTP poderá implementar esse contrato; não existe transporte HTTP nesta fase.
 
 ## Camadas
 

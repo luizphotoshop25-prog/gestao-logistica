@@ -17,8 +17,8 @@ Gestão Logística é um aplicativo desktop local para acompanhar pedidos fotogr
 ## Arquitetura
 
 1. `electron/main.cjs` inicializa banco/integrações, abre a janela e registra IPC.
-2. `electron/preload.cjs` fornece uma API controlada em `window.logistica` com `contextBridge`.
-3. `src/main.tsx` monta `src/App.tsx`; este concentra a mesa operacional, filtros, ficha, importação e clientes.
+2. `electron/preload.cjs` fornece uma API controlada em `window.gestaoAPI` com `contextBridge`; o renderer a consome pelo adaptador IPC de `src/services/dataService.ts`.
+3. `src/main.tsx` monta `src/App.tsx`; este concentra a mesa operacional, filtros, ficha, importação e clientes. O renderer usa `src/services/dataService.ts`, hoje um adaptador IPC sem transformação de payloads, retornos ou erros.
 4. `electron/database.cjs` contém o esquema, regras de estágio, persistência, transações, histórico e backups.
 
 O banco é criado em `<Electron userData>/GestaoLogistica/gestao-logistica.sqlite3`; os diretórios `backups/` e `comprovantes/` coexistem ali. Não é o banco dentro do repositório.
