@@ -65,6 +65,15 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 3. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
 4. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.
 
+## Baseline de recuperação
+
+- **Data:** 23/09/2026; **commit oficial:** `be1dbe6` (`chore: establish recovered project baseline`) no branch `master`.
+- **`npm run check`:** aprovado, sem erros ou warnings relevantes; aproximadamente 152 segundos.
+- **Build oficial (`npm run build`):** aprovado; TypeScript e Vite concluíram e escreveram somente o artefato ignorado `dist/`; aproximadamente 279 segundos.
+- **Smoke de banco:** passou em cópia SQLite descartável, com fonte aberta em modo somente leitura e alvo temporário. A expectativa de remessa agora acompanha a próxima sexta calculada em `America/Sao_Paulo`; em 23/09/2026, retornou `2026-09-25`.
+- **Smoke visual:** aprovado com fixture sintético (`M99999`, `Cliente Teste Visual`) em banco e perfil Electron temporários. O supervisor inicia Vite local, bloqueia IPCs externos/de escrita e tráfego fora de `127.0.0.1:8090`, encerra Electron e remove o perfil temporário. As imagens ficam em `work/` por padrão ou em `GESTAO_CAPTURE_PATH`.
+- **Banco real:** não foi aberto para escrita, copiado, migrado ou alterado. A cópia-fonte temporária foi removida após a validação.
+
 ## Regras confirmadas pelo código
 
 - A etapa é derivada por marcos, sem campo de status concorrente: `sessao_criada → galeria_publicada → aguardando_selecao → em_tratamento → tratamento_concluido → em_impressao → impressoes_recebidas → etiqueta_criada → em_remessa → postado → entregue`.

@@ -1156,8 +1156,17 @@ function updateMilestone(input) {
   return { ok: true };
 }
 
+
+function close() {
+  if (!db) return;
+  db.close();
+  db = null;
+  dataDirectory = null;
+}
+
 module.exports = {
   initialize,
+  close,
   getStatus,
   listOrders,
   getDashboard,

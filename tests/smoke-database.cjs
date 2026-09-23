@@ -3,6 +3,15 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync, backup } = require("node:sqlite");
+function nextFridayInSaoPaulo() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type)?.value;
+  const date = new Date(`${value("year")}-${value("month")}-${value("day")}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + (5 - date.getUTCDay() + 7) % 7);
+  return date.toISOString().slice(0, 10);
+}
 
 async function main() {
   const sourcePath = process.env.GESTAO_TEST_SOURCE_DB;
@@ -65,7 +74,7 @@ async function main() {
   const finalListOrder = database.listOrders({ search: session, filter: "all" })[0];
   assert.equal(finalOrder.prazo_tratamento_em, "2026-09-11");
   assert.equal(finalOrder.prazo_maximo_em, "2026-10-21");
-  assert.equal(finalListOrder.remessa_data_planejada, "2026-08-28");
+  assert.equal(finalListOrder.remessa_data_planejada, nextFridayInSaoPaulo());
   assert.equal(finalOrder.fornecedor_impressao, "Digital Fotos");
 
   const check = new DatabaseSync(targetPath, { readOnly: true });
