@@ -10,7 +10,7 @@ O protótipo HTTP de teste oferece um segundo caminho: `dataService` → `httpDa
 
 `src/services/dataService.ts` reutiliza as assinaturas existentes de `src/global.d.ts`. O adaptador IPC delega argumentos, retornos e callbacks sem transformação. O adaptador HTTP implementa somente listagem, ficha, dashboard e atualização; integrações, arquivos e ações específicas do cliente retornam indisponibilidade previsível, sem fallback para IPC.
 
-`server/api-server.cjs` usa somente `node:http`, exige um `userDataPath` absoluto e explícito, recusa host diferente de `127.0.0.1` e disponibiliza `GET /health`, `GET /api/orders`, `GET /api/orders/:id`, `GET /api/dashboard` e `PATCH /api/orders/:id`. Ele reutiliza diretamente as regras existentes em `electron/database.cjs`; não há alteração de schema ou duplicação de regras.
+`server/api-server.cjs` usa somente módulos nativos, exige um `userDataPath` absoluto e explícito, recusa host diferente de `127.0.0.1` e disponibiliza autenticação simples, além das rotas de pedidos e dashboard. `GET /health` é público; as rotas operacionais exigem token de sessão válido. A API reutiliza diretamente as regras existentes em `electron/database.cjs`.
 
 ## Camadas
 
@@ -32,6 +32,8 @@ O protótipo HTTP de teste oferece um segundo caminho: `dataService` → `httpDa
 | `pedido_observacoes_siwin` | Observações SIWIN. |
 | `selecoes_email` | E-mails EPICS e marcações. |
 | `eventos` | Histórico de ações. |
+| `usuarios` | Identidade local, hash de senha e estado ativo. |
+| `sessoes` | Hash do token, validade e revogação da sessão HTTP. |
 
 Clientes e remessas possuem pedidos; pedidos possuem anexos, itens, observações, seleções e eventos.
 
@@ -40,6 +42,10 @@ Clientes e remessas possuem pedidos; pedidos possuem anexos, itens, observaçõe
 `listOrders` junta pedido/cliente/remessa, `deriveStage` determina a etapa e `operationalInfo` calcula fila, responsabilidade e urgência. O renderer apenas apresenta e solicita detalhes. `updateMilestone` valida próximo marco/data, ajusta prazos de seleção e grava evento.
 
 Cada pedido possui `revisao`, iniciada em `1` e aumentada por qualquer escrita no pedido. A ficha devolve essa revisão e `updateOrder` exige a revisão recebida: o `UPDATE` transacional só ocorre quando ela ainda é a atual. Divergências retornam `REVISION_CONFLICT` (e HTTP `409`) sem sobrescrever dados. Não há repetição automática: a tentativa rejeitada retorna ao cliente sem gerar evento de alteração. O smoke HTTP simultâneo com duas requisições na mesma revisão confirmou um sucesso, um `409`, uma única incrementação e banco íntegro.
+
+A autenticação HTTP usa senha com `scrypt` e sal aleatório. O token de sessão é aleatório, expira em 12 horas e somente seu hash SHA-256 é armazenado no SQLite; logout e desativação revogam sessões. No Electron, `safeStorage` protege o token persistido, enquanto o renderer o mantém somente em memória. O transporte IPC continua utilizável sem login nesta fase.
+
+Ao atualizar um pedido por HTTP, a API obtém o autor da sessão e passa seu identificador ao banco; o cliente não informa `usuario_id`. O evento só é criado depois do `UPDATE` condicional bem-sucedido, portanto conflitos `409` não produzem autoria ou histórico falsos. Eventos anteriores permanecem compatíveis com `usuario_id` nulo.
 
 `importer.cjs` normaliza planilhas; `importSafeRows` faz backup, localiza/cria cliente, grava em transação e ignora sessão duplicada. SIWIN é espelhado no SQLite após consultas bloqueadas contra escrita. Thunderbird é idempotente por `message_id`, vincula por sessão e não sobrescreve seleção existente.
 

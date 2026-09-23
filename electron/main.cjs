@@ -1,7 +1,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
 const database = require("./database.cjs");
 const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
@@ -25,6 +25,24 @@ if (httpTestMode) {
 let mainWindow;
 let siwinTimer;
 let thunderbirdTimer;
+const sessionFile = () => path.join(app.getPath("userData"), "gestao-http-session.bin");
+function registerSessionIpc() {
+  ipcMain.handle("auth-session:read", (event) => {
+    if (!trusted(event) || !safeStorage.isEncryptionAvailable() || !fs.existsSync(sessionFile())) return "";
+    try { return safeStorage.decryptString(fs.readFileSync(sessionFile())); } catch { return ""; }
+  });
+  ipcMain.handle("auth-session:write", (event, token) => {
+    if (!trusted(event) || !safeStorage.isEncryptionAvailable() || typeof token !== "string" || !token) return { ok: false };
+    fs.mkdirSync(path.dirname(sessionFile()), { recursive: true });
+    fs.writeFileSync(sessionFile(), safeStorage.encryptString(token));
+    return { ok: true };
+  });
+  ipcMain.handle("auth-session:clear", (event) => {
+    if (!trusted(event)) return { ok: false };
+    fs.rmSync(sessionFile(), { force: true });
+    return { ok: true };
+  });
+}
 
 function trusted(event) {
   return mainWindow && !mainWindow.isDestroyed() && event.sender.id === mainWindow.webContents.id;
@@ -151,6 +169,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!httpTestMode) database.initialize(app);
+  registerSessionIpc();
   registerIpc();
   createWindow();
   if (httpTestMode) return;

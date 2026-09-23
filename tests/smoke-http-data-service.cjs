@@ -6,12 +6,14 @@ const vm = require("node:vm");
 const ts = require("typescript");
 const database = require("../electron/database.cjs");
 const { startApiServer } = require("../server/api-server.cjs");
+const { TEST_PASSWORD, createTestUser } = require("./http-test-auth.cjs");
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-http-service-"));
   let api;
   try {
     api = await startApiServer({ userDataPath: path.join(root, "api-user-data") });
+    createTestUser(database);
     const imported = database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M99997", clienteNome: "Cliente HTTP Teste", clienteEmail: "http-service@example.invalid", clienteTelefone: "00000000000", clienteCidade: "Curitiba - TESTE", fotosQuantidade: 3, observacoes: "Fixture do adaptador HTTP.", editor: "Editor HTTP", selecaoFinalizadaEm: null, tratamentoConcluido: false }] });
     assert.equal(imported.ok, true);
     const source = fs.readFileSync(path.join(__dirname, "../src/services/dataService.ts"), "utf8");
@@ -21,6 +23,7 @@ async function main() {
     const { dataService, httpDataService, ipcDataService } = context.exports;
     assert.equal(dataService, httpDataService);
     assert.notEqual(dataService, ipcDataService);
+    assert.equal((await dataService.login({ usuario: "usuario-teste", senha: TEST_PASSWORD })).ok, true);
     const listed = await dataService.listOrders({ search: "M99997", filter: "all" });
     assert.equal(listed.rows.length, 1);
     const id = listed.rows[0].id;

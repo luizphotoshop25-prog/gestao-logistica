@@ -35,3 +35,9 @@ contextBridge.exposeInMainWorld("gestaoConfig", {
   dataTransport: process.env.GESTAO_DATA_TRANSPORT === "http" ? "http" : "ipc",
   apiUrl: process.env.GESTAO_DATA_TRANSPORT === "http" ? process.env.GESTAO_API_URL || "" : "",
 });
+
+contextBridge.exposeInMainWorld("gestaoSession", {
+  read: () => ipcRenderer.invoke("auth-session:read"),
+  write: (token) => ipcRenderer.invoke("auth-session:write", token),
+  clear: () => ipcRenderer.invoke("auth-session:clear"),
+});

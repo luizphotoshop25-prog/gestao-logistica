@@ -151,11 +151,29 @@ function initialize(app) {
       fotos_separadas_em TEXT,
       processado_em TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      usuario TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      senha_hash TEXT NOT NULL,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      criado_em TEXT NOT NULL,
+      atualizado_em TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessoes (
+      id TEXT PRIMARY KEY,
+      usuario_id TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      criado_em TEXT NOT NULL,
+      expira_em TEXT NOT NULL,
+      revogado_em TEXT
+    );
     CREATE TABLE IF NOT EXISTS eventos (
       id TEXT PRIMARY KEY,
       pedido_id TEXT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
       tipo TEXT NOT NULL,
       descricao TEXT NOT NULL,
+      usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
       criado_em TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_pedidos_cliente ON pedidos(cliente_id);
@@ -165,6 +183,7 @@ function initialize(app) {
     CREATE INDEX IF NOT EXISTS idx_pedido_observacoes_siwin_pedido ON pedido_observacoes_siwin(pedido_id);
     CREATE INDEX IF NOT EXISTS idx_selecoes_email_pedido ON selecoes_email(pedido_id);
     CREATE INDEX IF NOT EXISTS idx_selecoes_email_sessao ON selecoes_email(sessao);
+    CREATE INDEX IF NOT EXISTS idx_sessoes_token ON sessoes(token_hash);
   `);
   ensureClientColumns();
   db.exec("DROP INDEX IF EXISTS idx_clientes_siwin_cad; CREATE UNIQUE INDEX idx_clientes_siwin_cad ON clientes(siwin_cad);");
@@ -178,6 +197,7 @@ function initialize(app) {
   ensureOrderColumns();
   ensureOrderRevision();
   ensureSelectionEmailColumns();
+  ensureEventColumns();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
     setConfiguration("migracao_selecoes_conferidas_v1", now());
@@ -233,6 +253,11 @@ function ensureSelectionEmailColumns() {
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE selecoes_email ADD COLUMN ${name} ${type}`);
   }
+}
+
+function ensureEventColumns() {
+  const existing = new Set(db.prepare("PRAGMA table_info(eventos)").all().map((column) => column.name));
+  if (!existing.has("usuario_id")) db.exec("ALTER TABLE eventos ADD COLUMN usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL");
 }
 
 function ensureClientColumns() {
@@ -487,7 +512,9 @@ function getOrder(orderId) {
       quantidade_selecionada,quantidade_total,codigos_json,status,conferida_em,fotos_separadas_em
       FROM selecoes_email WHERE pedido_id=? ORDER BY recebido_em DESC`).all(order.id)
       .map((item) => ({ ...item, codigos: JSON.parse(item.codigos_json || "[]") })),
-    events: db.prepare("SELECT id,tipo,descricao,criado_em FROM eventos WHERE pedido_id=? ORDER BY criado_em DESC LIMIT 100").all(order.id),
+    events: db.prepare(`SELECT e.id,e.tipo,e.descricao,e.usuario_id,u.nome usuario_nome,u.usuario usuario_login,e.criado_em
+      FROM eventos e LEFT JOIN usuarios u ON u.id=e.usuario_id
+      WHERE e.pedido_id=? ORDER BY e.criado_em DESC LIMIT 100`).all(order.id),
   };
 }
 
@@ -554,8 +581,8 @@ function updateOrder(input) {
       db.exec("ROLLBACK");
       return { ok: false, error: "REVISION_CONFLICT", message: "Este pedido foi alterado por outro usuário. Suas alterações não foram salvas. Reabra a ficha para consultar a versão atual." };
     }
-    db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)").run(
-      id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => field !== "prazo_tratamento_em" && field !== "prazo_maximo_em" && field !== "atualizado_em").map(([field]) => field).join(", ")}.`, now(),
+    db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)").run(
+      id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => field !== "prazo_tratamento_em" && field !== "prazo_maximo_em" && field !== "atualizado_em").map(([field]) => field).join(", ")}.`, clean(input?.usuarioId) || null, now(),
     );
     db.exec("COMMIT");
     return getOrder(orderId);
@@ -579,7 +606,7 @@ function addAttachment(orderId, type, sourcePath) {
   db.prepare("INSERT INTO anexos VALUES (?,?,?,?,?,?)").run(
     attachmentId, order.id, clean(type) || "comprovante", originalName, target, now(),
   );
-  db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)").run(
+  db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)").run(
     id(), order.id, "anexo", `Arquivo anexado: ${originalName}.`, now(),
   );
   return { ok: true, attachment: { id: attachmentId, tipo: clean(type), nome_arquivo: originalName } };
@@ -696,7 +723,7 @@ function bulkUpdateOrders(input = {}) {
       if (action === "printing_sent") db.prepare(`UPDATE pedidos SET fornecedor_impressao=coalesce(nullif(fornecedor_impressao,''),'Digital Fotos') WHERE id IN (${existingPlaceholders})`).run(...existingIds);
       description = `Etapa ${field} registrada em ${date}.`;
     }
-    const insertEvent = db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)");
+    const insertEvent = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)");
     for (const order of eligible) insertEvent.run(id(), order.id, `massa_${action}`, description, now());
     db.exec("COMMIT");
     return { ok: true, updated: eligible.length, skipped: skipped.length, skippedDetails: skipped.slice(0, 20),
@@ -715,7 +742,7 @@ function markSelectionEmail(input = {}) {
   if (!selection) return { ok: false, message: "Seleção não encontrada." };
   const value = clean(input.value) || now();
   db.prepare(`UPDATE selecoes_email SET ${field}=? WHERE id=?`).run(value, emailId);
-  if (selection.pedido_id) db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)").run(
+  if (selection.pedido_id) db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)").run(
     id(), selection.pedido_id, field, field === "conferida_em" ? "Seleção conferida." : "Fotos marcadas como separadas.", now(),
   );
   return { ok: true };
@@ -751,7 +778,7 @@ function linkSiwinSessions(rows) {
   const findClient = db.prepare("SELECT id FROM clientes WHERE siwin_cad=?");
   const findOrder = db.prepare("SELECT id FROM pedidos WHERE sessao=? AND cliente_id IS NULL");
   const link = db.prepare("UPDATE pedidos SET cliente_id=?, atualizado_em=?, revisao=revisao+1 WHERE id=? AND cliente_id IS NULL");
-  const addEvent = db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)");
+  const addEvent = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)");
   let linked = 0;
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -988,7 +1015,7 @@ function importThunderbirdSelections(records) {
   ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
   const findOrder = db.prepare("SELECT * FROM pedidos WHERE upper(sessao)=upper(?) LIMIT 1");
   const linkEmail = db.prepare("UPDATE selecoes_email SET pedido_id=?,status='vinculado' WHERE id=?");
-  const insertEvent = db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)");
+  const insertEvent = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)");
   let imported = 0;
   let linked = 0;
   let datesSet = 0;
@@ -1169,7 +1196,7 @@ function updateMilestone(input) {
       order.id,
     );
   }
-  db.prepare("INSERT INTO eventos VALUES (?,?,?,?,?)").run(
+  db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)").run(
     id(),
     order.id,
     field,
@@ -1187,6 +1214,41 @@ function close() {
   dataDirectory = null;
 }
 
+function createUser(input) {
+  const nome = clean(input?.nome);
+  const usuario = clean(input?.usuario).toLowerCase();
+  const senhaHash = clean(input?.senhaHash);
+  if (!nome || !usuario || !senhaHash) return { ok: false, message: "Nome, usuário e senha são obrigatórios." };
+  if (!/^[a-z0-9._-]{3,40}$/.test(usuario)) return { ok: false, message: "Usuário inválido." };
+  try {
+    const userId = id();
+    const timestamp = now();
+    db.prepare("INSERT INTO usuarios (id,nome,usuario,senha_hash,ativo,criado_em,atualizado_em) VALUES (?,?,?,?,1,?,?)").run(userId, nome, usuario, senhaHash, timestamp, timestamp);
+    return { ok: true, user: { id: userId, nome, usuario, ativo: true } };
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) return { ok: false, message: "Usuário já existe." };
+    throw error;
+  }
+}
+
+function getUserForLogin(usuario) { return db.prepare("SELECT * FROM usuarios WHERE usuario=? COLLATE NOCASE").get(clean(usuario)); }
+function createSession(input) {
+  const sessionId = id();
+  db.prepare("INSERT INTO sessoes (id,usuario_id,token_hash,criado_em,expira_em) VALUES (?,?,?,?,?)").run(sessionId, input.usuarioId, input.tokenHash, now(), input.expiraEm);
+  return sessionId;
+}
+function getSessionUser(tokenHash) {
+  return db.prepare(`SELECT u.id,u.nome,u.usuario,u.ativo,s.id sessao_id,s.expira_em
+    FROM sessoes s JOIN usuarios u ON u.id=s.usuario_id
+    WHERE s.token_hash=? AND s.revogado_em IS NULL AND s.expira_em>?`).get(clean(tokenHash), now()) || null;
+}
+function revokeSession(tokenHash) { return db.prepare("UPDATE sessoes SET revogado_em=? WHERE token_hash=? AND revogado_em IS NULL").run(now(), clean(tokenHash)).changes > 0; }
+function setUserActive(userId, active) {
+  const result = db.prepare("UPDATE usuarios SET ativo=?,atualizado_em=? WHERE id=?").run(active ? 1 : 0, now(), clean(userId));
+  if (!active) db.prepare("UPDATE sessoes SET revogado_em=? WHERE usuario_id=? AND revogado_em IS NULL").run(now(), clean(userId));
+  return { ok: result.changes === 1 };
+}
+
 module.exports = {
   initialize,
   close,
@@ -1198,6 +1260,12 @@ module.exports = {
   listClients,
   getOrder,
   updateOrder,
+  createUser,
+  getUserForLogin,
+  createSession,
+  getSessionUser,
+  revokeSession,
+  setUserActive,
   addAttachment,
   getAttachmentPath,
   getSiwinStatus,

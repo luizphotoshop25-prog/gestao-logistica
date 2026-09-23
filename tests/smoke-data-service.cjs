@@ -14,8 +14,9 @@ async function main() {
   vm.runInNewContext(compiled, context);
   const { dataService, ipcDataService } = context.exports;
   assert.equal(dataService, ipcDataService);
-  assert.equal(Object.keys(dataService).length, 19);
-  for (const method of Object.keys(dataService)) {
+  const delegatedMethods = Object.keys(dataService).filter((method) => !["login", "logout", "currentUser", "restoreSession"].includes(method));
+  assert.equal(delegatedMethods.length, 19);
+  for (const method of delegatedMethods) {
     const args = method.startsWith("on") ? [() => {}] : [{ id: "synthetic" }, "synthetic"];
     const expected = method.startsWith("on") ? () => {} : Promise.resolve({ ok: true });
     bridge[method] = function (...received) {

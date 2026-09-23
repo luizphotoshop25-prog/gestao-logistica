@@ -18,9 +18,18 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "addAttachment"
   | "openAttachment"
   | "openExternal"
->;
+> & {
+  login(input: { usuario: string; senha: string }): Promise<AuthResult>;
+  logout(): Promise<{ ok: boolean }>;
+  currentUser(): Promise<AuthResult>;
+  restoreSession(token: string): void;
+};
 
 export const ipcDataService: DataService = {
+  login: async () => ({ ok: false, message: "Login não é exigido no modo IPC." }),
+  logout: async () => ({ ok: true }),
+  currentUser: async () => ({ ok: true, user: { id: "ipc-local", nome: "Usuário local", usuario: "local" } }),
+  restoreSession: () => {},
   dashboard: () => window.gestaoAPI.dashboard(),
   siwinStatus: () => window.gestaoAPI.siwinStatus(),
   syncSiwin: () => window.gestaoAPI.syncSiwin(),
@@ -46,17 +55,26 @@ const unsupportedMessage = "Indisponível no transporte HTTP de protótipo.";
 const unsupported = () => ({ ok: false, message: unsupportedMessage });
 
 export function createHttpDataService(apiUrl: string): DataService {
+  let sessionToken = "";
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     if (!apiUrl.startsWith("http://127.0.0.1:") || !/^[0-9]+$/.test(apiUrl.slice(17))) throw new Error("API HTTP de teste não configurada em loopback.");
     const response = await fetch(apiUrl + path, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(init?.headers || {}) },
     });
     const body = await response.json();
     return body;
   };
 
   return {
+    login: async (input) => {
+      const result = await request<AuthResult>("/api/auth/login", { method: "POST", body: JSON.stringify(input) });
+      if (result.ok && result.session) sessionToken = result.session;
+      return result;
+    },
+    logout: async () => { const result = await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }); sessionToken = ""; return result; },
+    currentUser: () => request("/api/auth/current"),
+    restoreSession: (token) => { sessionToken = token; },
     dashboard: () => request("/api/dashboard"),
     siwinStatus: async () => ({ ok: false, lastCad: 0, lastSync: null, lastImported: 0 }),
     syncSiwin: async () => ({ ...unsupported(), imported: 0, updated: 0, total: 0, importedOrders: 0, updatedOrders: 0, syncedItems: 0, scopedClients: 0, linked: 0, unmatched: 0 }),

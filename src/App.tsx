@@ -828,7 +828,7 @@ export function App() {
 
             <div className="detail-bottom detail-pane pane-history">
               <section><h3>Anexos</h3>{detail.attachments.length ? detail.attachments.map((item) => <button className="file-row" key={item.id} onClick={() => dataService.openAttachment(item.id)}><Paperclip size={14} /><span>{item.nome_arquivo}</span><small>{item.tipo}</small></button>) : <p>Nenhum arquivo anexado.</p>}</section>
-              <section><h3>Histórico</h3><div className="event-list">{detail.events.length ? detail.events.map((item) => <div key={item.id}><span>{item.descricao}</span><small>{new Date(item.criado_em).toLocaleString("pt-BR")}</small></div>) : <p>Nenhum evento registrado.</p>}</div></section>
+              <section><h3>Histórico</h3><div className="event-list">{detail.events.length ? detail.events.map((item) => <div key={item.id}><span>{item.descricao}</span><small>{new Date(item.criado_em).toLocaleString("pt-BR")}{item.usuario_nome ? ` · ${item.usuario_nome}` : ""}</small></div>) : <p>Nenhum evento registrado.</p>}</div></section>
             </div>
             <footer><span className={`save-state ${formDirty ? "dirty" : ""}`}>{formDirty ? "Alterações não salvas" : "Dados salvos"}</span><button className="secondary" onClick={closeOrder}>Fechar</button><button className="primary" onClick={saveOrder} disabled={busy || !formDirty}><Save size={17} /> Salvar alterações</button></footer>
           </section>

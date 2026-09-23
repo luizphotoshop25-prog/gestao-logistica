@@ -17,6 +17,8 @@ if (httpTransport && !/^http:\/\/127\.0\.0\.1:\d+$/.test(apiUrl)) throw new Erro
 const apiHost = httpTransport ? new URL(apiUrl).host : "";
 const expectedSession = process.env.GESTAO_CAPTURE_SESSION || "M99999";
 const expectedClientName = process.env.GESTAO_CAPTURE_CLIENT_NAME || "Cliente Teste Visual";
+const captureUser = process.env.GESTAO_CAPTURE_USER || "";
+const capturePassword = process.env.GESTAO_CAPTURE_PASSWORD || "";
 const outputPath = process.env.GESTAO_CAPTURE_PATH || path.join(projectRoot, "work", "gestao-logistica-ui.png");
 const menuOutputPath = outputPath.replace(/\.png$/i, "-menu.png");
 const detailOutputPath = outputPath.replace(/\.png$/i, "-pedido.png");
@@ -71,7 +73,12 @@ app.setPath("userData", profilePath);
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
 const allowedChannels = new Set(["app:status", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status"]);
-if (httpTransport) allowedChannels.clear();
+if (httpTransport) {
+  allowedChannels.clear();
+  allowedChannels.add("auth-session:read");
+  allowedChannels.add("auth-session:write");
+  allowedChannels.add("auth-session:clear");
+}
 const registerHandler = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => registerHandler(channel, allowedChannels.has(channel) ? handler : () => {
   fail(new Error(`IPC externo ou de escrita bloqueado: ${channel}`));
@@ -106,6 +113,10 @@ app.whenReady().then(() => {
     clearInterval(poll);
     nativeSetTimeout(async () => {
       try {
+        if (httpTransport) {
+          await waitForSelector(window, ".auth-card");
+          await window.webContents.executeJavaScript(`(() => { const inputs=document.querySelectorAll('.auth-card input'); const set=(input,value)=>{ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,value); input.dispatchEvent(new Event('input',{bubbles:true})); }; set(inputs[0],${JSON.stringify(captureUser)}); set(inputs[1],${JSON.stringify(capturePassword)}); document.querySelector('.auth-card').requestSubmit(); })()`);
+        }
         await waitForSelector(window, ".session-link");
         const visible = await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(expectedSession)}) && document.body.innerText.includes(${JSON.stringify(expectedClientName)}) && typeof window.gestaoAPI.getOrder === "function" && (!${httpTransport} || window.gestaoConfig.dataTransport === "http")`);
         if (!visible) throw new Error("Fixture ou preload ausente.");

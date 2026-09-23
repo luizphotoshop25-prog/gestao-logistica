@@ -4,9 +4,11 @@ const os = require("node:os");
 const path = require("node:path");
 const database = require("../electron/database.cjs");
 const { startApiServer } = require("../server/api-server.cjs");
+const { createTestUser, login, authHeaders } = require("./http-test-auth.cjs");
+let token = "";
 
 async function getJson(url, init) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, headers: { ...authHeaders(token), ...(init?.headers || {}) } });
   const body = await response.json();
   assert.equal(response.ok, true, body.message || `HTTP ${response.status}`);
   return body;
@@ -22,7 +24,9 @@ async function main() {
   let api;
   try {
     api = await startApiServer({ userDataPath: path.join(root, "api-user-data") });
-    assert.equal((await getJson(api.origin + "/health")).ok, true);
+    assert.equal((await fetch(api.origin + "/health").then((response) => response.json())).ok, true);
+    createTestUser(database);
+    token = (await login(api.origin)).session;
     const imported = database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M99997", clienteNome: "Cliente HTTP Teste", clienteEmail: "http-teste@example.invalid", clienteTelefone: "00000000000", clienteCidade: "Curitiba - TESTE", fotosQuantidade: 12, observacoes: "Fixture HTTP sintético.", editor: "Editor HTTP", selecaoFinalizadaEm: null, tratamentoConcluido: false }] });
     assert.equal(imported.ok, true);
     assert.equal(imported.imported, 1);
@@ -37,7 +41,7 @@ async function main() {
     assert.deepEqual(httpDetail, directDetail);
     assert.equal(httpDetail.order.sessao, "M99997");
     assert.equal(httpDetail.order.cliente_nome, "Cliente HTTP Teste");
-    const missingResponse = await fetch(api.origin + "/api/orders/inexistente");
+    const missingResponse = await fetch(api.origin + "/api/orders/inexistente", { headers: authHeaders(token) });
     assert.equal(missingResponse.status, 404);
     assert.deepEqual(await missingResponse.json(), database.getOrder("inexistente"));
 
@@ -47,12 +51,12 @@ async function main() {
     assert.equal(httpDashboard.dashboard.total, 1);
 
     const revision = httpDetail.order.revisao;
-    const updated = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Atualizado exclusivamente pelo smoke HTTP." } }) });
+    const updated = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Atualizado exclusivamente pelo smoke HTTP." } }) });
     assert.equal(updated.ok, true);
     const persisted = await getJson(api.origin + "/api/orders/" + encodeURIComponent(orderId));
     assert.equal(persisted.order.observacoes, "Atualizado exclusivamente pelo smoke HTTP.");
     assert.equal(persisted.order.revisao, revision + 1);
-    const conflictResponse = await fetch(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Sobrescrita que não pode acontecer." } }) });
+    const conflictResponse = await fetch(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify({ revisao: revision, values: { observacoes: "Sobrescrita que não pode acontecer." } }) });
     assert.equal(conflictResponse.status, 409);
     const conflict = await conflictResponse.json();
     assert.equal(conflict.ok, false);

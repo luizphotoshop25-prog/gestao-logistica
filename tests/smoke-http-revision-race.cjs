@@ -5,6 +5,7 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const database = require("../electron/database.cjs");
 const { startApiServer } = require("../server/api-server.cjs");
+const { createTestUser, login, authHeaders } = require("./http-test-auth.cjs");
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-http-race-"));
@@ -17,11 +18,13 @@ async function main() {
     assert(path.basename(resolvedRoot).startsWith("gestao-http-race-"));
     assert(!fs.lstatSync(resolvedRoot).isSymbolicLink());
     api = await startApiServer({ userDataPath });
+    createTestUser(database);
+    const token = (await login(api.origin)).session;
     assert.equal(database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M12346", clienteNome: "Cliente Corrida HTTP", clienteEmail: "corrida@example.invalid", clienteTelefone: "00000000000", clienteCidade: "TESTE", fotosQuantidade: 1, selecaoFinalizadaEm: null, tratamentoConcluido: false }] }).imported, 1);
     const orderId = database.listOrders({ search: "M12346", filter: "all" })[0].id;
     const initial = database.getOrder(orderId);
     const revision = initial.order.revisao;
-    const request = (observacoes) => fetch(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revisao: revision, values: { observacoes } }) }).then(async (response) => ({ status: response.status, body: await response.json() }));
+    const request = (observacoes) => fetch(api.origin + "/api/orders/" + encodeURIComponent(orderId), { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify({ revisao: revision, values: { observacoes } }) }).then(async (response) => ({ status: response.status, body: await response.json() }));
     const attempts = await Promise.allSettled([request("Vencedor A"), request("Vencedor B")]);
     assert.equal(attempts.length, 2);
     assert(attempts.every((attempt) => attempt.status === "fulfilled"));

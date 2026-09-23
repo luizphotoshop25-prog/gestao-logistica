@@ -64,7 +64,9 @@ type ClientRow = {
 };
 
 type AttachmentRow = { id: string; tipo: string; nome_arquivo: string; criado_em: string };
-type EventRow = { id: string; tipo: string; descricao: string; criado_em: string };
+type EventRow = { id: string; tipo: string; descricao: string; usuario_id?: string | null; usuario_nome?: string | null; usuario_login?: string | null; criado_em: string };
+type AuthUser = { id: string; nome: string; usuario: string };
+type AuthResult = { ok: boolean; user?: AuthUser; session?: string; expiraEm?: string; message?: string };
 type SiwinObservationRow = { id: string; siwin_ped_obs: number; usuario: string | null; cadastrado_em: string | null; observacao: string };
 type SelectionEmailRow = {
   id: string;
@@ -131,6 +133,7 @@ interface DashboardSummary {
 
 interface Window {
   gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
+  gestaoSession: { read(): Promise<string>; write(token: string): Promise<{ ok: boolean }>; clear(): Promise<{ ok: boolean }> };
   gestaoAPI: {
     status(): Promise<Record<string, unknown>>;
     dashboard(): Promise<{ ok: boolean; dashboard: DashboardSummary }>;

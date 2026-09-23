@@ -4,7 +4,7 @@ _Contexto recuperado em 23/09/2026 a partir do código deste diretório. O códi
 
 ## Visão geral
 
-Gestão Logística é um aplicativo desktop local para acompanhar pedidos fotográficos da sessão/galeria até a entrega. Centraliza clientes, pedidos, seleção de fotos, tratamento, impressão, etiqueta, remessa, rastreio, anexos e histórico. A versão atual é de usuário único: não há autenticação, autorização por perfil nem serviço web próprio implementados. Perfis citados no `README.md` são planejamento futuro.
+Gestão Logística é um aplicativo desktop local para acompanhar pedidos fotográficos da sessão/galeria até a entrega. Centraliza clientes, pedidos, seleção de fotos, tratamento, impressão, etiqueta, remessa, rastreio, anexos e histórico. O transporte HTTP possui autenticação simples para poucos funcionários; o transporte IPC local permanece sem login nesta fase. Não há autorização por perfil ou identidade externa.
 
 ## Stack e execução
 
@@ -35,6 +35,7 @@ O banco é criado em `<Electron userData>/GestaoLogistica/gestao-logistica.sqlit
 - Leitura de e-mails EPICS do Thunderbird, vinculação por sessão e marcação de seleção conferida/fotos separadas.
 - Remessa semanal planejada para a próxima sexta-feira; agrupamento não implica postagem.
 - Backup diário e backups preventivos antes de operações sensíveis, incluindo importação.
+- Usuários locais com login e senha, sessão HTTP revogável e autoria de alterações de pedido.
 
 ## Regras confirmadas pelo código
 
@@ -69,6 +70,9 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 
 - Em 23/09/2026, pedidos passaram a ter a coluna compatível `revisao`, com valor inicial `1`. Leituras de ficha retornam a revisão; a atualização exige esse valor e só grava quando ele coincide com o registro atual.
 - Uma atualização aceita incrementa a revisão. Escritas por edição, marcos, ações em massa, SIWIN e Thunderbird também a incrementam. Uma gravação baseada em versão antiga retorna `REVISION_CONFLICT`; a API HTTP responde `409` e não altera o pedido. Não há repetição automática e a tentativa rejeitada não gera histórico. O smoke simultâneo HTTP foi aprovado com duas requisições concorrentes, um sucesso, um conflito, uma única incrementação e integridade SQLite confirmada.
+- Senhas são armazenadas somente como hash `scrypt` com sal aleatório. O login HTTP cria um token aleatório de sessão com validade de 12 horas; somente seu hash SHA-256 é persistido. Logout, expiração ou desativação do usuário invalidam o acesso.
+- As rotas operacionais HTTP exigem sessão válida; `GET /health` permanece público. O Electron guarda o token criptografado com `safeStorage`, fora de `localStorage`, e o mantém apenas em memória no adaptador HTTP.
+- A autoria de `updateOrder` é derivada exclusivamente da sessão validada no servidor. Eventos antigos e eventos originados por fluxos sem usuário continuam válidos com autoria nula. O smoke confirmou autoria por dois usuários e ausência de evento para uma tentativa rejeitada por conflito.
 
 ## Próximos passos recomendados
 
