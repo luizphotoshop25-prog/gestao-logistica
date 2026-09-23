@@ -9,7 +9,7 @@ Antes de alterações relevantes, leia `AGENTS.md`, `PROJECT_CONTEXT.md` e `ARCH
 - Electron + React + TypeScript + Vite; SQLite local via `node:sqlite`.
 - `npm run check` valida tipos e sintaxe sem emissão.
 - `npm run build` escreve `dist/`; `npm run dev` inicia aplicativo; `npm run capture:ui` escreve perfil/imagens em `work/`; `npm run dist` empacota Windows.
-- `tests/smoke-database.cjs` exige `GESTAO_TEST_SOURCE_DB` apontando para cópia SQLite descartável.
+- `node tests/smoke-database.cjs` cria SQLite temporário com fixture sintético; não exige fonte externa.
 
 ## Responsabilidades
 
@@ -40,4 +40,4 @@ Antes de alterações relevantes, leia `AGENTS.md`, `PROJECT_CONTEXT.md` e `ARCH
 
 ## Estado Git
 
-O repositório ainda não tem commits. Preserve os arquivos atuais e não assuma histórico inexistente.
+O baseline recuperado está no branch `master`; não assuma que exista remote ou histórico anterior ao baseline.

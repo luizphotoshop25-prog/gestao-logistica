@@ -53,26 +53,24 @@ As entidades SQLite são `configuracoes`, `clientes`, `pedidos`, `remessas`, `an
 
 SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em leitura e espera o executável em `C:\siwin\Siwin-Master\Siwin\Siwin.exe`. Thunderbird é localizado em `%APPDATA%\Thunderbird`; são aceitos e-mails de `nao-responda@epics.com.br` associados a sessões `M<dígitos>`. A preparação de códigos pode escrever em `C:\GerenciadorFotos\lista_formatada.txt` quando acionada.
 
-- Git existe, mas `master` não possui commits, tags, branches nem remote; todos os arquivos de origem estavam não rastreados. Não há histórico Git recuperável.
+- O baseline recuperado está no branch `master`; não há remote configurado nem histórico anterior recuperável.
 - `work/` contém perfis Electron, capturas e cópias SQLite de smoke test; `dist/` é build Vite. Não são fonte nem banco de produção.
 - As auditorias `AUDITORIA_2026-08-22.md` e `AUDITORIA_FRONTEND_2026-08-23.md` foram preservadas como evidência histórica.
-- Em 23/09/2026, `npm run check` passou. Build não foi executado porque altera `dist/`; smoke exige `GESTAO_TEST_SOURCE_DB` e captura visual grava em `work/`, ambos preservados nesta análise.
+- Em 23/09/2026, `npm run check` passou. Build não foi executado porque altera `dist/`; os smokes criam seus próprios dados temporários e a captura grava imagens ignoradas em `work/`.
 
 ## Próximos passos recomendados
 
-1. Criar o primeiro commit preservando esta fonte de verdade.
-2. Executar smoke de banco somente com cópia SQLite descartável em `GESTAO_TEST_SOURCE_DB`.
-3. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
-4. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.
+1. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
+2. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.
 
 ## Baseline de recuperação
 
-- **Data:** 23/09/2026; **commit oficial:** `be1dbe6` (`chore: establish recovered project baseline`) no branch `master`.
-- **`npm run check`:** aprovado, sem erros ou warnings relevantes; aproximadamente 152 segundos.
-- **Build oficial (`npm run build`):** aprovado; TypeScript e Vite concluíram e escreveram somente o artefato ignorado `dist/`; aproximadamente 279 segundos.
-- **Smoke de banco:** passou em cópia SQLite descartável, com fonte aberta em modo somente leitura e alvo temporário. A expectativa de remessa agora acompanha a próxima sexta calculada em `America/Sao_Paulo`; em 23/09/2026, retornou `2026-09-25`.
-- **Smoke visual:** aprovado com fixture sintético (`M99999`, `Cliente Teste Visual`) em banco e perfil Electron temporários. O supervisor inicia Vite local, bloqueia IPCs externos/de escrita e tráfego fora de `127.0.0.1:8090`, encerra Electron e remove o perfil temporário. As imagens ficam em `work/` por padrão ou em `GESTAO_CAPTURE_PATH`.
-- **Banco real:** não foi aberto para escrita, copiado, migrado ou alterado. A cópia-fonte temporária foi removida após a validação.
+- Baseline anterior: `738352b666cdfdfec9370870cbe1fac1acc7278d`, branch `master`.
+- Em 23/09/2026, smoke de banco aprovado duas vezes sem `GESTAO_TEST_SOURCE_DB`: inicialização oficial de SQLite vazio em diretório temporário, fixture sintético `M99998`, prazos +20/+60, remessa de sexta, integridade e supressão de histórico duplicado. Conexões fechadas e diretório próprio removido ao finalizar.
+- Captura visual aprovada duas vezes com fixture sintético `M99999`, perfil temporário e portas loopback dinâmicas 50608 e 57280. Vite mantém a porta alocada enquanto Electron usa a mesma origem. Perfis removidos após encerramento; imagens ignoradas em `work/`.
+- `npm run check` e sintaxe dos scripts validados. Nenhum banco real ou integração externa foi utilizado nestes testes.
+- Desenvolvimento normal mantém `8090`; a captura fornece sua origem dinâmica. A data da remessa segue o relógio em `America/Sao_Paulo`; demais datas e dados do fixture são fixos.
+- Estes smokes não validam integrações reais nem migração de um banco legado; o resíduo da execução antiga não foi removido nesta etapa.
 
 ## Regras confirmadas pelo código
 
@@ -93,15 +91,13 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, espera o executável em `C:\siwin\
 
 ## Estado atual e riscos
 
-- Git existe, mas `master` não possui commits, tags, branches nem remote; todos os arquivos atuais estavam não rastreados no inventário. Não há histórico Git recuperável.
+- O baseline recuperado está no branch `master`; não há remote configurado nem histórico anterior recuperável.
 - `work/` contém artefatos locais: perfis Electron, capturas e cópias SQLite de smoke test. `dist/` é build Vite. Não são fonte nem banco de produção.
 - As auditorias `AUDITORIA_2026-08-22.md` e `AUDITORIA_FRONTEND_2026-08-23.md` foram preservadas como evidência histórica.
-- Em 23/09/2026, `npm run check` passou. Build não foi executado porque altera `dist/`; o smoke de banco exige `GESTAO_TEST_SOURCE_DB` e a captura visual grava em `work/`, ambos preservados nesta análise.
+- Em 23/09/2026, `npm run check` passou. Build não foi executado porque altera `dist/`; os smokes criam seus próprios dados temporários e a captura grava imagens ignoradas em `work/`.
 - A disponibilidade de SIWIN, Thunderbird e GerenciadorFotos depende do ambiente Windows real e não foi inferida como operacional pelo código.
 
 ## Próximos passos recomendados
 
-1. Criar o primeiro commit preservando esta fonte de verdade.
-2. Executar smoke de banco somente com cópia SQLite descartável em `GESTAO_TEST_SOURCE_DB`.
-3. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
-4. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.
+1. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
+2. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.

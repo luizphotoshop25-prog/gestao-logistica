@@ -107,6 +107,7 @@ function runThunderbirdSync() {
 }
 
 function createWindow() {
+  const devServerUrl = process.env.GESTAO_DEV_SERVER_URL || "http://127.0.0.1:8090";
   mainWindow = new BrowserWindow({
     width: 1500,
     height: 940,
@@ -123,12 +124,12 @@ function createWindow() {
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    const allowed = app.isPackaged ? url.startsWith("file:") : url.startsWith("http://127.0.0.1:8090");
+    const allowed = app.isPackaged ? url.startsWith("file:") : url.startsWith(devServerUrl);
     if (!allowed) event.preventDefault();
   });
   mainWindow.once("ready-to-show", () => mainWindow.show());
   if (app.isPackaged) mainWindow.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
-  else mainWindow.loadURL("http://127.0.0.1:8090");
+  else mainWindow.loadURL(devServerUrl);
 }
 
 app.whenReady().then(() => {

@@ -9,9 +9,13 @@ async function main() {
   let server;
   try {
     const { createServer } = await import("vite");
-    server = await createServer({ root: path.join(__dirname, ".."), server: { host: "127.0.0.1", port: 8090, strictPort: true, open: false } });
+    server = await createServer({ root: path.join(__dirname, ".."), server: { host: "127.0.0.1", port: 0, strictPort: true, open: false } });
     await server.listen();
-    const env = { ...process.env, GESTAO_CAPTURE_PROFILE: root };
+    const address = server.httpServer.address();
+    assert(address && typeof address === "object" && address.address === "127.0.0.1");
+    const port = address.port;
+    const origin = `http://127.0.0.1:${port}`;
+    const env = { ...process.env, GESTAO_CAPTURE_PROFILE: root, GESTAO_DEV_SERVER_URL: origin, GESTAO_CAPTURE_PORT: String(port) };
     delete env.ELECTRON_RUN_AS_NODE;
     await new Promise((resolve, reject) => {
       const electron = spawn(require("electron"), [path.join(__dirname, "capture-ui.cjs")], { env, stdio: "inherit", windowsHide: true });
@@ -20,7 +24,7 @@ async function main() {
       electron.once("error", (error) => { clearTimeout(timer); reject(error); });
       electron.once("exit", (code) => {
         clearTimeout(timer);
-        if (code === 0 && !expired) resolve();
+        if (code === 0 && !expired) { console.log(`porta=${port}`); resolve(); }
         else reject(new Error(`Captura falhou: code=${code}, timeout=${expired}`));
       });
     });

@@ -8,6 +8,9 @@ const realProfilePath = path.resolve(app.getPath("userData"));
 const profilePath = process.env.GESTAO_CAPTURE_PROFILE;
 if (!profilePath) throw new Error("Execute npm run capture:ui para preparar o perfil isolado.");
 const resolvedProfilePath = path.resolve(profilePath);
+const devServerUrl = process.env.GESTAO_DEV_SERVER_URL;
+if (!devServerUrl || !/^http:\/\/127\.0\.0\.1:\d+$/.test(devServerUrl)) throw new Error("Origem local dinâmica ausente ou inválida.");
+const devServerHost = new URL(devServerUrl).host;
 const outputPath = process.env.GESTAO_CAPTURE_PATH || path.join(projectRoot, "work", "gestao-logistica-ui.png");
 const menuOutputPath = outputPath.replace(/\.png$/i, "-menu.png");
 const detailOutputPath = outputPath.replace(/\.png$/i, "-pedido.png");
@@ -82,7 +85,7 @@ app.on("web-contents-created", (_event, contents) => {
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     const url = new URL(details.url);
-    const allowed = ["http:", "ws:"].includes(url.protocol) && url.host === "127.0.0.1:8090";
+    const allowed = ["http:", "ws:"].includes(url.protocol) && url.host === devServerHost;
     callback({ cancel: !allowed && !["data:", "devtools:"].includes(url.protocol) });
   });
 });
