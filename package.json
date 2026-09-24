@@ -1,6 +1,6 @@
 {
   "name": "gestao-logistica",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -76,8 +76,12 @@
     },
     "nsis": {
       "artifactName": "gestao-logistica-setup-${version}.${ext}",
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "include": "build/installer.nsh",
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "packElevateHelper": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

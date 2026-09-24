@@ -70,7 +70,7 @@ async function main() {
     assert.deepEqual(controller.getState(), { status: "downloaded", version: "0.1.1" });
     assert.deepEqual(updater.installs, []);
     assert.deepEqual(controller.install(), { ok: true });
-    assert.deepEqual(updater.installs, [[false, true]]);
+    assert.deepEqual(updater.installs, [[true, true]], "NSIS updates must run silently and relaunch the app");
     assert.ok(states.some((state) => state.status === "available"));
     assert.ok(states.some((state) => state.status === "downloading" && state.percent === 43.6));
     assert.ok(states.some((state) => state.status === "downloaded"));

@@ -89,7 +89,7 @@ function createUpdaterController({ app, autoUpdater, resourcesPath, send = () =>
 
   function install() {
     if (!enabled || !updateDownloaded) return { ok: false };
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(true, true);
     return { ok: true };
   }
 
