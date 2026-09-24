@@ -14,6 +14,7 @@ h1 { margin: 5px 0 3px; font-size: 30px; letter-spacing: -.03em; }
 h2 { margin: 0; font-size: 18px; }
 p { margin: 0; color: #758096; }
 .topbar p { color: #bdc9dd; }
+.app-version { margin-left: 7px; padding: 2px 5px; border: 1px solid #ffffff40; border-radius: 5px; color: #d3e1f3; font-size: 10px; font-weight: 700; letter-spacing: .02em; }
 .header-actions { display:flex; align-items:center; gap:10px; }
 .primary,.secondary { border: 0; border-radius: 10px; padding: 12px 17px; display: inline-flex; align-items: center; gap: 8px; font-weight: 750; }
 .primary { color: #fff; background: #1676d2; box-shadow: 0 8px 20px #0c5eac45; }

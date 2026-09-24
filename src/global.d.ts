@@ -1,3 +1,5 @@
+declare const __APP_VERSION__: string;
+
 type ImportRow = {
   linha: number;
   sessao: string;

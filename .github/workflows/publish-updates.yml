@@ -27,3 +27,22 @@ jobs:
           $version = node -p "require('./package.json').version"
           if ($env:RELEASE_TAG -ne "v$version") { throw "Tag $env:RELEASE_TAG must equal v$version" }
       - run: npm run publish:windows
+      - name: Upload and verify NSIS blockmap
+        shell: pwsh
+        run: |
+          $blockmaps = @(Get-ChildItem release -File -Filter "*.blockmap")
+          if ($blockmaps.Count -ne 1) { throw "Expected one NSIS blockmap; found $($blockmaps.Count)." }
+          gh release upload $env:RELEASE_TAG $blockmaps[0].FullName --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload the NSIS blockmap." }
+
+          $manifest = Get-Content release/latest.yml -Raw
+          $installerMatch = [regex]::Match($manifest, '(?m)^\s+- url: (.+)$')
+          if (-not $installerMatch.Success) { throw "latest.yml does not name an installer asset." }
+          $installerName = $installerMatch.Groups[1].Value.Trim()
+          if ($blockmaps[0].Name -ne "$installerName.blockmap") { throw "NSIS blockmap does not match latest.yml installer." }
+
+          $releaseAssets = gh release view $env:RELEASE_TAG --json assets | ConvertFrom-Json
+          $publishedNames = @($releaseAssets.assets | ForEach-Object { $_.name })
+          foreach ($expected in @("latest.yml", $installerName, "$installerName.blockmap")) {
+            if ($expected -notin $publishedNames) { throw "Release is missing asset: $expected" }
+          }

@@ -542,7 +542,7 @@ export function App({ currentUser }: { currentUser: AuthUser }) {
           <div className="brand-copy">
             <span className="eyebrow">ESTÚDIO MANOEL GUIMARÃES</span>
             <h1>Gestão Logística</h1>
-            <p>Central de pedidos e entregas</p>
+            <p>Central de pedidos e entregas <small className="app-version">v{__APP_VERSION__}</small></p>
           </div>
         </div>
         <div className="topbar-actions">
