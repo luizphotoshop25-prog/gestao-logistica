@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,7 +19,7 @@ jobs:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,19 +33,24 @@ jobs:
           $version = node -p "require('./package.json').version"
           if ($env:RELEASE_TAG -ne "v$version") { throw "Tag $env:RELEASE_TAG must equal v$version" }
       - run: npm run publish:windows
-      - name: Upload and verify NSIS blockmap
+      - name: Upload and verify NSIS release assets
         shell: pwsh
         run: |
+          $installers = @(Get-ChildItem release -File -Filter "gestao-logistica-setup-*.exe")
+          if ($installers.Count -ne 1) { throw "Expected one NSIS installer; found $($installers.Count)." }
+          $installer = $installers[0]
           $blockmaps = @(Get-ChildItem release -File -Filter "*.blockmap")
           if ($blockmaps.Count -ne 1) { throw "Expected one NSIS blockmap; found $($blockmaps.Count)." }
-          gh release upload $env:RELEASE_TAG $blockmaps[0].FullName --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Could not upload the NSIS blockmap." }
-
-          $manifest = Get-Content release/latest.yml -Raw
+          $manifestPath = Join-Path (Resolve-Path release).Path "latest.yml"
+          if (-not (Test-Path -LiteralPath $manifestPath)) { throw "latest.yml was not generated." }
+          $manifest = Get-Content $manifestPath -Raw
           $installerMatch = [regex]::Match($manifest, '(?m)^\s+- url: (.+)$')
           if (-not $installerMatch.Success) { throw "latest.yml does not name an installer asset." }
           $installerName = $installerMatch.Groups[1].Value.Trim()
+          if ($installer.Name -ne $installerName) { throw "Installer does not match latest.yml." }
           if ($blockmaps[0].Name -ne "$installerName.blockmap") { throw "NSIS blockmap does not match latest.yml installer." }
+          gh release upload $env:RELEASE_TAG $installer.FullName $blockmaps[0].FullName $manifestPath --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload the NSIS release assets." }
 
           $releaseAssets = gh release view $env:RELEASE_TAG --json assets | ConvertFrom-Json
           $publishedNames = @($releaseAssets.assets | ForEach-Object { $_.name })
