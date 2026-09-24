@@ -75,6 +75,7 @@
       "target": "nsis"
     },
     "nsis": {
+      "artifactName": "gestao-logistica-setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }

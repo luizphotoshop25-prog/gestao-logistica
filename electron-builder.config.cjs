@@ -10,18 +10,12 @@ if (localElectronDist && (!path.isAbsolute(localElectronDist) || !fs.existsSync(
   throw new Error("GESTAO_ELECTRON_DIST precisa apontar para uma distribuição Electron Windows local válida.");
 }
 
-const owner = process.env.GESTAO_UPDATE_GITHUB_OWNER || "";
-const repo = process.env.GESTAO_UPDATE_GITHUB_REPO || "";
-if (Boolean(owner) !== Boolean(repo)) {
-  throw new Error("Defina juntos GESTAO_UPDATE_GITHUB_OWNER e GESTAO_UPDATE_GITHUB_REPO para builds com update.");
-}
-if (owner && (!/^[A-Za-z0-9-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo))) {
-  throw new Error("Owner/repo do GitHub inválidos para a origem de atualização.");
-}
+const owner = "luizphotoshop25-prog";
+const repo = "gestao-logistica";
 
 module.exports = {
   ...packageJson.build,
   ...(outputDirectory ? { directories: { ...packageJson.build.directories, output: outputDirectory } } : {}),
   ...(localElectronDist ? { electronDist: localElectronDist } : {}),
-  publish: owner && repo ? [{ provider: "github", owner, repo, releaseType: "release" }] : [],
+  publish: [{ provider: "github", owner, repo, releaseType: "release" }],
 };

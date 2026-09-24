@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 release-updater-localdist/
+release-updater-*/
 data/
 work/
 *.log
@@ -10,6 +11,7 @@ work/
 .env
 .env.*
 !.env.example
+*.env
 *.db
 *.db-*
 *.sqlite
@@ -19,6 +21,21 @@ work/
 *.bak
 *.backup
 backups/
+auth.json
+gestao-client*.json
+*.token
+*.secret
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+*.der
+secrets/
+credentials/
+GestaoLogistica_Server_Pilot/
+**/_Server/_Pilot/
 coverage/
 .vite/
 *.tsbuildinfo

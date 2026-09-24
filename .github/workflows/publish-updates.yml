@@ -13,8 +13,6 @@ jobs:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      GESTAO_UPDATE_GITHUB_OWNER: ${{ github.repository_owner }}
-      GESTAO_UPDATE_GITHUB_REPO: ${{ github.event.repository.name }}
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4

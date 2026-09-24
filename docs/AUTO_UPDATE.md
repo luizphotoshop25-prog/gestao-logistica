@@ -1,6 +1,6 @@
 # Auto-update do Gestão Logística para Windows
 
-O aplicativo usa `electron-updater` com o target NSIS já existente. O feed é GitHub Releases público e é gravado dentro do build; a aplicação não lê origem de atualização fornecida pelo usuário. Sem owner/repositório configurados no build, o updater fica desativado e o aplicativo continua funcionando normalmente.
+O aplicativo usa `electron-updater` com o target NSIS já existente. O feed é GitHub Releases público em `luizphotoshop25-prog/gestao-logistica` e é gravado dentro do build; a aplicação não lê origem de atualização fornecida pelo usuário.
 
 ## Primeira instalação e bootstrap
 
@@ -8,16 +8,16 @@ A versão atualmente instalada no PC do funcionário não contém o updater e n�
 
 ## Configuração única do repositório
 
-Não há remote Git configurado neste checkout. Quando o repositório público de releases estiver definido, o build receberá o owner e o nome exato do repo em `GESTAO_UPDATE_GITHUB_OWNER` e `GESTAO_UPDATE_GITHUB_REPO`. Esses valores são embutidos no metadata de update do NSIS; não são inputs do aplicativo instalado. Releases privados não funcionam para os funcionários sem credenciais pessoais no cliente e não são suportados por este fluxo.
+O owner/repo público é fixo no `electron-builder.config.cjs` e embutido no metadata do NSIS. A origem não pode ser substituída por configuração do aplicativo ou por variáveis locais. Releases privados não funcionam para os funcionários sem credenciais pessoais no cliente e não são suportados por este fluxo.
 
-O workflow `.github/workflows/publish-updates.yml` publica builds Windows ao enviar uma tag SemVer igual à versão no `package.json`; ele usa o `GITHUB_TOKEN` do próprio GitHub Actions, sem salvar token no repositório. Após conectar este código ao repo público correto:
+O workflow `.github/workflows/publish-updates.yml` publica builds Windows ao enviar uma tag SemVer igual à versão no `package.json`; ele usa o `GITHUB_TOKEN` do próprio GitHub Actions, sem salvar token no repositório:
 
 1. Publique primeiro a versão bootstrap `v0.1.0` com este código e instale manualmente o setup dessa release no PC funcionário. O cliente 0.1.0 antigo não contém updater e não consegue se atualizar sozinho.
 2. Incremente a versão SemVer no `package.json` (por exemplo, `npm version patch`, que também atualiza `package-lock.json` e cria a tag local).
 3. Envie o commit e a tag correspondente: `git push origin master --follow-tags`.
 4. O workflow cria uma GitHub Release e envia os artefatos NSIS e metadata.
 
-Para publicar manualmente no Windows, defina os dois valores acima e `GH_TOKEN` com permissão `contents: write` para o repo; então execute `npm run publish:windows`. O segredo é usado somente no processo de publicação e não é escrito no app.
+Para publicar manualmente no Windows, defina `GH_TOKEN` com permissão `contents: write` para o repo e execute `npm run publish:windows`. O segredo é usado somente no processo de publicação e não é escrito no app.
 
 ## Fluxo do funcionário
 
