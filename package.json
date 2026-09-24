@@ -27,6 +27,7 @@
     "smoke:http-race": "node tests/smoke-http-revision-race.cjs",
     "user:create": "node scripts/create-user.cjs",
     "smoke:auth": "node tests/smoke-auth.cjs",
+    "smoke:packaged": "node tests/smoke-packaged-runtime.cjs",
     "smoke:lan": "node tests/smoke-lan.cjs",
     "server:lan": "node server/lan-server.cjs",
     "pilot:prepare": "node scripts/prepare-lan-pilot.cjs"
@@ -61,8 +62,7 @@
       "electron/importer.cjs",
       "electron/siwin.cjs",
       "electron/thunderbird.cjs",
-      "package.json",
-      "!node_modules/**/*"
+      "package.json"
     ],
     "win": {
       "target": "nsis"
