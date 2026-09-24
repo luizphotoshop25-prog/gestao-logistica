@@ -156,6 +156,12 @@ interface DashboardSummary {
   };
 }
 
+type AppUpdateState =
+  | { status: "idle" | "checking" }
+  | { status: "available" | "downloaded"; version: string }
+  | { status: "downloading"; percent: number }
+  | { status: "error"; message: string };
+
 interface Window {
   gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
   gestaoSession: { read(): Promise<string>; write(token: string): Promise<{ ok: boolean }>; clear(): Promise<{ ok: boolean }> };
@@ -186,5 +192,9 @@ interface Window {
     createSolicitation(input: { descricao: string; observacao?: string; sessao_codigo?: string; responsavel_usuario_id: string; prazo_em?: string }): Promise<SolicitationResult>;
     updateSolicitation(input: { id: string; revision: number; values: Partial<Pick<Solicitation, "descricao" | "observacao" | "sessao_codigo" | "responsavel_usuario_id" | "prazo_em">> }): Promise<SolicitationResult>;
     transitionSolicitation(input: { id: string; revision: number; action: "start" | "complete" | "cancel" | "reopen" }): Promise<SolicitationResult>;
+    getUpdaterState(): Promise<{ ok: boolean; enabled: boolean; state: AppUpdateState }>;
+    downloadAppUpdate(): Promise<{ ok: boolean }>;
+    installAppUpdate(): Promise<{ ok: boolean }>;
+    onUpdaterState(callback: (state: AppUpdateState) => void): () => void;
   };
 }

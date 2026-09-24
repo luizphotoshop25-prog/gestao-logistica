@@ -35,6 +35,14 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   createSolicitation: (input) => ipcRenderer.invoke("solicitations:create", input),
   updateSolicitation: (input) => ipcRenderer.invoke("solicitations:update", input),
   transitionSolicitation: (input) => ipcRenderer.invoke("solicitations:transition", input),
+  getUpdaterState: () => ipcRenderer.invoke("updater:get-state"),
+  downloadAppUpdate: () => ipcRenderer.invoke("updater:download"),
+  installAppUpdate: () => ipcRenderer.invoke("updater:install"),
+  onUpdaterState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("updater:state", listener);
+    return () => ipcRenderer.removeListener("updater:state", listener);
+  },
 });
 
 contextBridge.exposeInMainWorld("gestaoConfig", {

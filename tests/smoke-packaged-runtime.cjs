@@ -4,7 +4,8 @@ const path = require("node:path");
 const { listPackage } = require("@electron/asar");
 
 async function main() {
-  const archive = path.resolve("release/win-unpacked/resources/app.asar");
+  const packageDirectory = process.env.GESTAO_PACKAGED_DIR || "release/win-unpacked";
+  const archive = path.resolve(packageDirectory, "resources/app.asar");
   assert.ok(fs.existsSync(archive), `Pacote não encontrado: ${archive}`);
 
   const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));

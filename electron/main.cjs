@@ -8,6 +8,8 @@ const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
 const thunderbird = require("./thunderbird.cjs");
 const { loadClientConfig } = require("./client-config.cjs");
+const { autoUpdater } = require("electron-updater");
+const { createUpdaterController } = require("./updater.cjs");
 
 const clientConfig = loadClientConfig({
   configPath: process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json"),
@@ -32,6 +34,7 @@ if (httpMode) {
 let mainWindow;
 let siwinTimer;
 let thunderbirdTimer;
+let updaterController;
 const sessionFile = () => path.join(app.getPath("userData"), `gestao-http-session-${crypto.createHash("sha256").update(clientConfig.apiUrl).digest("hex").slice(0, 16)}.bin`);
 function registerSessionIpc() {
   ipcMain.handle("auth-session:read", (event) => {
@@ -65,6 +68,29 @@ function handle(channel, callback) {
       return { ok: false, message: error?.message || "Erro inesperado." };
     }
   });
+}
+
+function registerUpdaterIpc() {
+  ipcMain.handle("updater:get-state", (event) => {
+    if (!trusted(event)) return { ok: false };
+    return { ok: true, enabled: Boolean(updaterController?.enabled), state: updaterController?.getState() || { status: "idle" } };
+  });
+  ipcMain.handle("updater:download", (event) => {
+    if (!trusted(event)) return { ok: false };
+    return updaterController?.download() || { ok: false };
+  });
+  ipcMain.handle("updater:install", (event) => {
+    if (!trusted(event)) return { ok: false };
+    return updaterController?.install() || { ok: false };
+  });
+}
+
+function writeUpdaterLog(message) {
+  try {
+    const logDirectory = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(logDirectory, { recursive: true });
+    fs.appendFileSync(path.join(logDirectory, "updater.log"), `${new Date().toISOString()} ${message}\n`, "utf8");
+  } catch { /* Update logging must not affect application availability. */ }
 }
 
 function registerIpc() {
@@ -191,7 +217,18 @@ app.whenReady().then(() => {
   if (!httpMode) database.initialize(app);
   registerSessionIpc();
   registerIpc();
+  registerUpdaterIpc();
+  updaterController = createUpdaterController({
+    app,
+    autoUpdater,
+    resourcesPath: process.resourcesPath,
+    send: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
+    },
+    logError: writeUpdaterLog,
+  });
   createWindow();
+  setTimeout(() => { void updaterController.checkSilently(); }, 10000);
   if (httpMode) return;
   setTimeout(async () => {
     await runSiwinSync();

@@ -9,6 +9,7 @@
     "@fontsource-variable/inter": "^5.3.0",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-tooltip": "^1.2.16",
+    "electron-updater": "6.8.9",
     "exceljs": "^4.4.0",
     "mssql": "^11.0.1"
   },
@@ -18,12 +19,15 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1 --port 8090 --strictPort\" \"wait-on http://127.0.0.1:8090 && electron .\"",
     "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit && node --check electron/main.cjs && node --check electron/client-config.cjs && node --check electron/preload.cjs && node --check electron/database.cjs && node --check electron/importer.cjs && node --check electron/siwin.cjs && node --check electron/thunderbird.cjs && node --check server/api-server.cjs && node --check server/lan-server.cjs && node --check scripts/create-user.cjs && node --check scripts/set-user-role.cjs && node --check scripts/prepare-lan-pilot.cjs",
+    "check": "tsc --noEmit && node --check electron/main.cjs && node --check electron/updater.cjs && node --check electron-builder.config.cjs && node --check scripts/check-release-config.cjs && node --check electron/client-config.cjs && node --check electron/preload.cjs && node --check electron/database.cjs && node --check electron/importer.cjs && node --check electron/siwin.cjs && node --check electron/thunderbird.cjs && node --check server/api-server.cjs && node --check server/lan-server.cjs && node --check scripts/create-user.cjs && node --check scripts/set-user-role.cjs && node --check scripts/prepare-lan-pilot.cjs",
     "capture:ui": "node tests/run-capture.cjs",
     "smoke:http": "node tests/smoke-http.cjs",
     "smoke:http-service": "node tests/smoke-http-data-service.cjs",
     "capture:http": "node tests/run-http-capture.cjs",
-    "dist": "npm run build && electron-builder --win",
+    "dist": "npm run build && electron-builder --win --config electron-builder.config.cjs",
+    "publish:windows": "node scripts/check-release-config.cjs && npm run build && electron-builder --win --config electron-builder.config.cjs --publish always",
+    "smoke:updater": "node tests/smoke-updater.cjs && node tests/smoke-updater-ipc.cjs",
+    "smoke:updater-config": "node tests/smoke-updater-build-config.cjs",
     "smoke:http-race": "node tests/smoke-http-revision-race.cjs",
     "user:create": "node scripts/create-user.cjs",
     "user:role": "node scripts/set-user-role.cjs",
@@ -58,6 +62,7 @@
     "files": [
       "dist/**/*",
       "electron/main.cjs",
+      "electron/updater.cjs",
       "electron/client-config.cjs",
       "electron/preload.cjs",
       "electron/database.cjs",
