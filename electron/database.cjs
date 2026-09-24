@@ -35,7 +35,8 @@ function addCalendarDays(isoDate, days) {
 }
 
 function initialize(app) {
-  return initializeDataDirectory(path.join(app.getPath("userData"), "GestaoLogistica"));
+  const configuredDataDirectory = process.env.GESTAO_SERVER_DATA;
+  return initializeDataDirectory(configuredDataDirectory || path.join(app.getPath("userData"), "GestaoLogistica"));
 }
 
 function initializeDataDirectory(directory) {

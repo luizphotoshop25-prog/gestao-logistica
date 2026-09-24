@@ -35,7 +35,9 @@ async function main() {
     const { service: workerB } = await serviceFor("func-b");
     assert.equal(managerUser.role, "coordinator");
     assert.equal(workerUser.role, "employee");
-    assert.equal((await manager.listSolicitationAssignees()).rows.length, 3);
+    const assignees = await manager.listSolicitationAssignees();
+    assert.equal(assignees.rows.length, 3);
+    assert.ok(assignees.rows.some((person) => person.usuario === "func-a" && person.role === "employee"), "HTTP coordinator can assign an active employee");
     assert.equal((await workerA.listSolicitationAssignees()).error, "FORBIDDEN");
 
     const created = await manager.createSolicitation({ descricao: "Conferir seleção", sessao_codigo: "M99997", responsavel_usuario_id: employeeA.id });

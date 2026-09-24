@@ -26,8 +26,13 @@ async function main() {
     assert.equal(database.getUserForLogin("legacy").role, "employee");
     database.close();
 
-    const dataDirectory = path.join(root, "fresh");
-    database.initializeDataDirectory(dataDirectory);
+    const dataDirectory = path.join(root, "ipc-configured-data");
+    const previousServerData = process.env.GESTAO_SERVER_DATA;
+    process.env.GESTAO_SERVER_DATA = dataDirectory;
+    database.initialize({ getPath: () => path.join(root, "ignored-electron-user-data") });
+    if (previousServerData === undefined) delete process.env.GESTAO_SERVER_DATA;
+    else process.env.GESTAO_SERVER_DATA = previousServerData;
+    assert.equal(database.getStatus().databasePath, path.join(dataDirectory, "gestao-logistica.sqlite3"), "Electron IPC must honor GESTAO_SERVER_DATA");
     const coordinator = makeUser("coordenador-teste", "coordinator");
     const employeeA = makeUser("funcionario-a", "employee");
     const employeeB = makeUser("funcionario-b", "employee");
@@ -82,7 +87,7 @@ async function main() {
     const inspection = new DatabaseSync(path.join(dataDirectory, "gestao-logistica.sqlite3"), { readOnly: true });
     assert.equal(inspection.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
     inspection.close();
-    console.log("Solicitações SQLite: migração de roles, acesso por responsável, prazo calculado, fluxo, revisão e sessão opcional aprovados.");
+    console.log("Solicitações SQLite/IPC: GESTAO_SERVER_DATA, responsáveis ativos, migração, acesso, prazo, fluxo, revisão e sessão opcional aprovados.");
   } finally {
     database.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
