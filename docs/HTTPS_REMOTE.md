@@ -24,4 +24,6 @@ O cliente HTTPS atual oferece login, listagem, ficha, dashboard e edição. Clie
 
 ## Validação antes do uso real
 
+O login limita a dez falhas por IP em quinze minutos e responde `429` durante o bloqueio. Quando a API é acessada pelo Cloudflare Tunnel, usa o cabeçalho `CF-Connecting-IP`; como a API deve ficar vinculada ao loopback, clientes externos não podem enviar esse cabeçalho diretamente à origem. A limitação é mantida em memória do processo e reinicia junto com a API.
+
 Execute os smokes locais, valide o certificado e a URL HTTPS a partir de outra rede, teste login, edição, conflito 409, queda e volta do servidor, e confirme que os dois PCs observam o mesmo pedido. Verifique backup e integridade do SQLite central. O teste por túnel e dois computadores físicos exige a URL e acesso ao servidor da empresa.

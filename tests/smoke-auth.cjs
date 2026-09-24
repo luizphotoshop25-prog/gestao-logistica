@@ -8,7 +8,7 @@ const database = require("../electron/database.cjs");
 const { startApiServer, createPasswordHash } = require("../server/api-server.cjs");
 const { TEST_PASSWORD, authHeaders } = require("./http-test-auth.cjs");
 
-async function json(responsePromise) { const response = await responsePromise; return { status: response.status, body: await response.json() }; }
+async function json(responsePromise) { const response = await responsePromise; return { status: response.status, retryAfter: response.headers.get("retry-after"), body: await response.json() }; }
 async function login(origin, usuario, senha) {
   return json(await fetch(origin + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ usuario, senha }) }));
 }
@@ -50,7 +50,14 @@ async function main() {
     const relogin = await login(api.origin, "usuario-a", TEST_PASSWORD);
     database.setUserActive(userA.id, false);
     assert.equal((await json(await fetch(api.origin + "/api/dashboard", { headers: authHeaders(relogin.body.session) }))).status, 401);
-    console.log("Autenticação: login, erro, 401, logout, desativação, dois usuários, autoria e conflito aprovados.");
+    const attempts = [];
+    for (let index = 0; index < 10; index += 1) attempts.push(await login(api.origin, "usuario-inexistente", "senha-incorreta"));
+    assert.deepEqual(attempts.slice(0, 9).map((attempt) => attempt.status), Array(9).fill(401));
+    assert.equal(attempts[9].status, 429);
+    const limited = await login(api.origin, "usuario-a", TEST_PASSWORD);
+    assert.equal(limited.status, 429);
+    assert(Number(limited.retryAfter) > 0);
+    console.log("Autenticação: sessões, autoria, conflito e limite de dez tentativas por IP em quinze minutos aprovados.");
   } finally {
     if (api) await api.close(); else database.close();
     fs.rmSync(root, { recursive: true, force: true });

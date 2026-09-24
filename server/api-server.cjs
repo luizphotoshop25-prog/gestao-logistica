@@ -3,9 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const net = require("node:net");
 const database = require("../electron/database.cjs");
 let active = false;
 const SESSION_HOURS = 12;
+const LOGIN_FAILURE_LIMIT = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const loginFailures = new Map();
 
 function hashToken(token) { return crypto.createHash("sha256").update(token).digest("hex"); }
 function createPasswordHash(password) {
@@ -25,6 +29,35 @@ function publicUser(user) { return user ? { id: user.id, nome: user.nome, usuari
 function readBearer(request) {
   const header = String(request.headers.authorization || "");
   return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+
+function loginRateKey(request) {
+  const cloudflareIp = String(request.headers["cf-connecting-ip"] || "").trim();
+  return net.isIP(cloudflareIp) ? cloudflareIp : request.socket.remoteAddress || "unknown";
+}
+
+function loginRateStatus(key, time = Date.now()) {
+  const entry = loginFailures.get(key);
+  if (!entry) return { allowed: true };
+  if (entry.blockedUntil > time) return { allowed: false, retryAfter: Math.ceil((entry.blockedUntil - time) / 1000) };
+  if (entry.windowStarted + LOGIN_WINDOW_MS <= time) loginFailures.delete(key);
+  return { allowed: true };
+}
+
+function recordLoginFailure(key, time = Date.now()) {
+  if (loginFailures.size > 5000) {
+    for (const [candidate, entry] of loginFailures) {
+      if (entry.blockedUntil <= time && entry.windowStarted + LOGIN_WINDOW_MS <= time) loginFailures.delete(candidate);
+    }
+  }
+  const previous = loginFailures.get(key);
+  const entry = !previous || previous.windowStarted + LOGIN_WINDOW_MS <= time
+    ? { windowStarted: time, failures: 0, blockedUntil: 0 }
+    : previous;
+  entry.failures += 1;
+  if (entry.failures >= LOGIN_FAILURE_LIMIT) entry.blockedUntil = time + LOGIN_WINDOW_MS;
+  loginFailures.set(key, entry);
+  return entry.blockedUntil > time ? Math.ceil((entry.blockedUntil - time) / 1000) : 0;
 }
 
 function sendJson(response, statusCode, body, allowedOrigin = "") {
@@ -92,9 +125,20 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
     try {
       if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true, database: "available" }, responseOrigin);
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        const rateKey = loginRateKey(request);
+        const rate = loginRateStatus(rateKey);
+        if (!rate.allowed) {
+          response.setHeader("Retry-After", String(rate.retryAfter));
+          return sendJson(response, 429, errorBody("LOGIN_RATE_LIMITED", "Muitas tentativas de login. Aguarde antes de tentar novamente."), responseOrigin);
+        }
         const body = await readJson(request);
         const user = database.getUserForLogin(body.usuario);
-        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) return sendJson(response, 401, { ok: false, message: "Usuário ou senha inválidos." }, responseOrigin);
+        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) {
+          const retryAfter = recordLoginFailure(rateKey);
+          if (retryAfter) response.setHeader("Retry-After", String(retryAfter));
+          return sendJson(response, retryAfter ? 429 : 401, { ...errorBody(retryAfter ? "LOGIN_RATE_LIMITED" : "INVALID_CREDENTIALS", retryAfter ? "Muitas tentativas de login. Aguarde antes de tentar novamente." : "Usuário ou senha inválidos.") }, responseOrigin);
+        }
+        loginFailures.delete(rateKey);
         const token = crypto.randomBytes(32).toString("base64url");
         const expiraEm = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
         database.createSession({ usuarioId: user.id, tokenHash: hashToken(token), expiraEm });
