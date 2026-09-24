@@ -59,14 +59,27 @@ export function createHttpDataService(apiUrl: string): DataService {
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     let target: URL;
     try { target = new URL(apiUrl); } catch { throw new Error("URL da API do Gestão Logística não configurada."); }
-    if (target.protocol !== "http:" || target.origin !== apiUrl || !target.port) throw new Error("URL da API do Gestão Logística inválida.");
+    const privateHttp = target.protocol === "http:" && Boolean(target.port)
+      && (target.hostname === "localhost" || target.hostname === "127.0.0.1" || /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(target.hostname));
+    if (target.origin !== apiUrl || target.username || target.password || (!privateHttp && target.protocol !== "https:")) {
+      throw new Error("URL da API do Gestão Logística inválida.");
+    }
     try {
       const response = await fetch(apiUrl + path, {
         ...init,
+        signal: AbortSignal.timeout(15000),
         headers: { "Content-Type": "application/json", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}), ...(init?.headers || {}) },
       });
-      return await response.json();
+      if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("O servidor respondeu em formato inesperado.");
+      const result = await response.json();
+      if (response.status === 401 && path !== "/api/auth/login") {
+        sessionToken = "";
+        window.dispatchEvent(new Event("gestao:session-expired"));
+        throw new Error("Sessão expirada. Entre novamente no Gestão Logística.");
+      }
+      return result;
     } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("O servidor demorou para responder. Tente novamente.");
       if (error instanceof TypeError) throw new Error("Não foi possível conectar ao servidor do Gestão Logística.");
       throw error;
     }

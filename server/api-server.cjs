@@ -56,7 +56,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
   if (lanPilot) {
     if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("dataDirectory absoluto é obrigatório no modo LAN.");
-    if (!host || host === "127.0.0.1" || port === 0) throw new Error("Modo LAN exige host explícito e porta estável.");
+    if (!host || port === 0) throw new Error("Modo servidor exige host explícito e porta estável.");
   } else {
     if (!userDataPath || !path.isAbsolute(userDataPath)) throw new Error("userDataPath absoluto é obrigatório.");
     if (host !== "127.0.0.1") throw new Error("Host de rede exige modo LAN explícito.");
@@ -83,7 +83,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
       if (responseOrigin) response.setHeader("Access-Control-Allow-Origin", responseOrigin);
-      response.setHeader("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+      response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       response.setHeader("Access-Control-Allow-Private-Network", "true");
       return response.end();
@@ -130,7 +130,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
     } catch (error) {
       const statusCode = error.code === "INVALID_JSON" ? 400 : error.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
-      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", error.message || "Erro interno."), responseOrigin);
+      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", statusCode === 500 ? "Erro interno." : error.message), responseOrigin);
     }
   });
 

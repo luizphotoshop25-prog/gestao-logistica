@@ -171,6 +171,8 @@ export function App() {
       if (ordersResult.ok) setOrders(ordersResult.rows);
       if (dashboardResult.ok) setDashboard(dashboardResult.dashboard);
       setSelectedIds([]);
+    } catch (error) {
+      if (requestId === listRequestRef.current) setNotice(error instanceof Error ? error.message : "Não foi possível carregar os dados.");
     } finally {
       if (requestId === listRequestRef.current) setInitialLoading(false);
     }
@@ -364,8 +366,10 @@ export function App() {
 
   const openOrder = async (orderId: string) => {
     setBusy(true);
-    const result = await dataService.getOrder(orderId);
-    setBusy(false);
+    let result: OrderDetailResult;
+    try { result = await dataService.getOrder(orderId); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível abrir o pedido."); return; }
+    finally { setBusy(false); }
     if (!result.ok) return setNotice(result.message || "Não foi possível abrir o pedido.");
     setDetail(result);
     setDetailTab("summary");
@@ -388,8 +392,10 @@ export function App() {
   const saveOrder = async () => {
     if (!detail) return;
     setBusy(true);
-    const result = await dataService.updateOrder({ id: detail.order.id, revisao: detail.order.revisao, values: form });
-    setBusy(false);
+    let result: OrderDetailResult;
+    try { result = await dataService.updateOrder({ id: detail.order.id, revisao: detail.order.revisao, values: form }); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível salvar o pedido."); return; }
+    finally { setBusy(false); }
     if (!result.ok) return setNotice(result.message || "Não foi possível salvar o pedido.");
     setDetail(result);
     setSavedForm({ ...form });

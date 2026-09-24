@@ -24,13 +24,13 @@ async function main() {
   const origin = `http://127.0.0.1:${port}`;
   let api;
   try {
-    api = await startApiServer({ dataDirectory, host: "0.0.0.0", port, allowedOrigin: ["null", "file://"], lanPilot: true });
+    api = await startApiServer({ dataDirectory, host: "127.0.0.1", port, allowedOrigin: ["null", "file://"], lanPilot: true });
     const userA = database.createUser({ nome: "Usuário LAN A", usuario: "lan-a", senhaHash: createPasswordHash(TEST_PASSWORD) }).user;
     const userB = database.createUser({ nome: "Usuário LAN B", usuario: "lan-b", senhaHash: createPasswordHash(TEST_PASSWORD + "B") }).user;
     database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M12348", clienteNome: "Cliente LAN", clienteEmail: "lan@example.invalid", clienteTelefone: "00000000000", clienteCidade: "TESTE", fotosQuantidade: 2, selecaoFinalizadaEm: null, tratamentoConcluido: false }] });
     const source = fs.readFileSync(path.join(__dirname, "../src/services/dataService.ts"), "utf8");
     const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
-    const context = { exports: {}, fetch, URL, URLSearchParams, TypeError, window: { gestaoAPI: {}, gestaoConfig: { dataTransport: "http", apiUrl: origin } } };
+    const context = { exports: {}, fetch, URL, URLSearchParams, TypeError, AbortSignal, window: { gestaoAPI: {}, gestaoConfig: { dataTransport: "http", apiUrl: origin } } };
     vm.runInNewContext(compiled, context);
     const serviceA = context.exports.createHttpDataService(origin);
     const serviceB = context.exports.createHttpDataService(origin);

@@ -37,6 +37,7 @@ async function main() {
     const env = { ...process.env, GESTAO_CAPTURE_PROFILE: path.join(root, "client-profile"), GESTAO_DEV_SERVER_URL: viteOrigin, GESTAO_DATA_TRANSPORT: "http", GESTAO_API_URL: api.origin, GESTAO_CAPTURE_SESSION: "M99997", GESTAO_CAPTURE_CLIENT_NAME: "Cliente HTTP Teste", GESTAO_CAPTURE_USER: "usuario-visual", GESTAO_CAPTURE_PASSWORD: TEST_PASSWORD, GESTAO_CAPTURE_PATH: output };
     delete env.ELECTRON_RUN_AS_NODE;
     env.GESTAO_HTTP_TEST_PROFILE = env.GESTAO_CAPTURE_PROFILE;
+    env.GESTAO_CLIENT_MODE = "lan-pilot";
     await new Promise((resolve, reject) => {
       const electron = spawn(require("electron"), [path.join(__dirname, "capture-ui.cjs")], { env, stdio: "inherit", windowsHide: true });
       let expired = false;

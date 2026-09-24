@@ -1,40 +1,22 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
 const database = require("./database.cjs");
 const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
 const thunderbird = require("./thunderbird.cjs");
+const { loadClientConfig } = require("./client-config.cjs");
 
-function isPrivateApiHost(hostname) {
-  if (hostname === "127.0.0.1" || hostname === "localhost") return true;
-  const parts = hostname.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  return parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || (parts[0] === 192 && parts[1] === 168);
-}
-
-function loadClientConfig() {
-  const configPath = process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json");
-  let fileConfig = {};
-  if (fs.existsSync(configPath)) {
-    if (!path.isAbsolute(configPath)) throw new Error("GESTAO_CLIENT_CONFIG deve ser absoluto.");
-    fileConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  }
-  return {
-    transport: process.env.GESTAO_DATA_TRANSPORT || fileConfig.transport || "ipc",
-    apiUrl: process.env.GESTAO_API_URL || fileConfig.apiUrl || "",
-    lanPilot: process.env.GESTAO_LAN_PILOT === "1" || fileConfig.mode === "lan-pilot",
-  };
-}
-
-const clientConfig = loadClientConfig();
+const clientConfig = loadClientConfig({
+  configPath: process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json"),
+});
 const httpMode = clientConfig.transport === "http";
 if (httpMode) {
   const profile = process.env.GESTAO_HTTP_TEST_PROFILE;
   const target = new URL(clientConfig.apiUrl);
-  if (target.protocol !== "http:" || target.origin !== clientConfig.apiUrl || !target.port || !isPrivateApiHost(target.hostname)) throw new Error("API HTTP deve usar uma origem privada explícita com porta.");
-  if (target.hostname === "127.0.0.1" || target.hostname === "localhost") {
+  if (target.protocol === "http:" && (target.hostname === "127.0.0.1" || target.hostname === "localhost")) {
     if (app.isPackaged || !profile || !path.isAbsolute(profile)) throw new Error("HTTP loopback exige desenvolvimento com perfil temporário explícito.");
     const parent = fs.realpathSync(path.dirname(profile));
     const temporary = fs.realpathSync(os.tmpdir());
@@ -42,7 +24,7 @@ if (httpMode) {
     if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Perfil HTTP fora do diretório temporário.");
     if (fs.existsSync(profile) && fs.lstatSync(profile).isSymbolicLink()) throw new Error("Perfil HTTP não pode ser link.");
     app.setPath("userData", profile);
-  } else if (!clientConfig.lanPilot) throw new Error("API de rede exige mode=lan-pilot na configuração do cliente.");
+  }
   process.env.GESTAO_DATA_TRANSPORT = "http";
   process.env.GESTAO_API_URL = clientConfig.apiUrl;
 }
@@ -50,7 +32,7 @@ if (httpMode) {
 let mainWindow;
 let siwinTimer;
 let thunderbirdTimer;
-const sessionFile = () => path.join(app.getPath("userData"), "gestao-http-session.bin");
+const sessionFile = () => path.join(app.getPath("userData"), `gestao-http-session-${crypto.createHash("sha256").update(clientConfig.apiUrl).digest("hex").slice(0, 16)}.bin`);
 function registerSessionIpc() {
   ipcMain.handle("auth-session:read", (event) => {
     if (!trusted(event) || !safeStorage.isEncryptionAvailable() || !fs.existsSync(sessionFile())) return "";
