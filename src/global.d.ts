@@ -65,8 +65,33 @@ type ClientRow = {
 
 type AttachmentRow = { id: string; tipo: string; nome_arquivo: string; criado_em: string };
 type EventRow = { id: string; tipo: string; descricao: string; usuario_id?: string | null; usuario_nome?: string | null; usuario_login?: string | null; criado_em: string };
-type AuthUser = { id: string; nome: string; usuario: string };
+type UserRole = "coordinator" | "employee";
+type AuthUser = { id: string; nome: string; usuario: string; role: UserRole };
 type AuthResult = { ok: boolean; user?: AuthUser; session?: string; expiraEm?: string; message?: string };
+type SolicitationStatus = "pending" | "in_progress" | "completed" | "cancelled";
+type Solicitation = {
+  id: string;
+  revision: number;
+  descricao: string;
+  observacao: string | null;
+  sessao_codigo: string | null;
+  responsavel_usuario_id: string;
+  responsavel_nome: string;
+  responsavel_usuario: string;
+  criado_por_usuario_id: string | null;
+  criado_por_nome: string;
+  status: SolicitationStatus;
+  prazo_em: string | null;
+  solicitada_em: string;
+  iniciado_em: string | null;
+  concluido_em: string | null;
+  cancelado_em: string | null;
+  created_at: string;
+  updated_at: string;
+  atrasada: boolean;
+};
+type SolicitationResult = { ok: boolean; error?: string; revisionAtual?: number; solicitation?: Solicitation; message?: string; unchanged?: boolean };
+type ActiveUser = Pick<AuthUser, "id" | "nome" | "usuario" | "role">;
 type SiwinObservationRow = { id: string; siwin_ped_obs: number; usuario: string | null; cadastrado_em: string | null; observacao: string };
 type SelectionEmailRow = {
   id: string;
@@ -155,5 +180,11 @@ interface Window {
     addAttachment(orderId: string, type: string): Promise<{ ok: boolean; canceled?: boolean; message?: string }>;
     openAttachment(attachmentId: string): Promise<{ ok: boolean; message?: string }>;
     openExternal(url: string): Promise<{ ok: boolean; message?: string }>;
+    listSolicitations(): Promise<{ ok: boolean; rows: Solicitation[]; message?: string }>;
+    getSolicitation(id: string): Promise<{ ok: boolean; solicitation?: Solicitation; message?: string }>;
+    listSolicitationAssignees(): Promise<{ ok: boolean; rows: ActiveUser[]; message?: string }>;
+    createSolicitation(input: { descricao: string; observacao?: string; sessao_codigo?: string; responsavel_usuario_id: string; prazo_em?: string }): Promise<SolicitationResult>;
+    updateSolicitation(input: { id: string; revision: number; values: Partial<Pick<Solicitation, "descricao" | "observacao" | "sessao_codigo" | "responsavel_usuario_id" | "prazo_em">> }): Promise<SolicitationResult>;
+    transitionSolicitation(input: { id: string; revision: number; action: "start" | "complete" | "cancel" | "reopen" }): Promise<SolicitationResult>;
   };
 }

@@ -16,8 +16,9 @@ async function main() {
   try {
     const nome = (await terminal.question("Nome: ")).trim();
     const usuario = (await terminal.question("Usuário: ")).trim();
+    const role = (await terminal.question("Perfil (coordinator/employee) [employee]: ")).trim() || "employee";
     const senha = await terminal.question("Senha: ");
-    const result = database.createUser({ nome, usuario, senhaHash: createPasswordHash(senha) });
+    const result = database.createUser({ nome, usuario, role, senhaHash: createPasswordHash(senha) });
     if (!result.ok) throw new Error(result.message);
     console.log("Usuário criado:", result.user.usuario);
   } finally { terminal.close(); database.close(); }

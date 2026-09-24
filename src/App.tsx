@@ -7,6 +7,7 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  ClipboardList,
   Clock3,
   Database,
   Inbox,
@@ -31,6 +32,7 @@ import { IntegrationMenu } from "./components/IntegrationMenu";
 import { OrderActionsMenu } from "./components/OrderActionsMenu";
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
+import { SolicitationIndicator, SolicitationsPage } from "./components/SolicitationsPage";
 
 const stageLabels: Record<string, string> = {
   sessao_criada: "Sessão criada",
@@ -107,7 +109,7 @@ const formatLastMovement = (value: string | null) => {
   return `Há ${days} dias`;
 };
 
-export function App() {
+export function App({ currentUser }: { currentUser: AuthUser }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary>({
     total: 0,
@@ -133,6 +135,7 @@ export function App() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [workspacePage, setWorkspacePage] = useState<"orders" | "solicitations">("orders");
   const [lastSiwinSync, setLastSiwinSync] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -389,6 +392,16 @@ export function App() {
     })));
   };
 
+  const openSolicitationSession = async (session: string) => {
+    setWorkspacePage("orders");
+    try {
+      const result = await dataService.listOrders({ search: session, filter: "all" });
+      const order = result.ok ? result.rows.find((row) => row.sessao.toUpperCase() === session.toUpperCase()) : undefined;
+      if (order) await openOrder(order.id);
+      else setNotice(`A sessão ${session} não foi encontrada.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível abrir a ficha da sessão."); }
+  };
+
   const saveOrder = async () => {
     if (!detail) return;
     setBusy(true);
@@ -540,6 +553,12 @@ export function App() {
 
       <main>
         {notice && <div className="notice" role="status">{notice}<button aria-label="Fechar aviso" onClick={() => setNotice("")}><X size={15} /></button></div>}
+        {workspacePage === "solicitations" ? <SolicitationsPage
+          currentUser={currentUser}
+          onBack={() => setWorkspacePage("orders")}
+          onNotice={setNotice}
+          onOpenOrder={(session) => void openSolicitationSession(session)}
+        /> : <>
         <section className="operations-overview">
           <div className="overview-heading">
             <div><span className="section-kicker">VISÃO OPERACIONAL</span><h2>O que exige atenção agora</h2><p>Prioridades calculadas a partir do fluxo e dos prazos registrados.</p></div>
@@ -559,6 +578,7 @@ export function App() {
               <span className="signal-icon"><PackageOpen size={19} /></span><span className="signal-copy"><strong>{dashboard.queues.readyLabel}</strong><span>Prontas para etiqueta</span><small>Preparar envio</small></span><ChevronRight size={17} />
             </button>
           </div>
+          {currentUser.role === "employee" && <SolicitationIndicator onOpen={() => setWorkspacePage("solicitations")} />}
         </section>
         <section className="workspace">
           <aside>
@@ -568,6 +588,9 @@ export function App() {
                 <span className="queue-label">{key === "needs_me" ? <Activity size={16} /> : key === "waiting" ? <Clock3 size={16} /> : <AlertTriangle size={16} />}<span>{label}</span></span><b>{dashboard.queues[countKey]}</b>
               </button>
             ))}
+            <button className="queue utility" onClick={() => setWorkspacePage("solicitations")}>
+              <span className="queue-label"><ClipboardList size={16} /><span>Solicitações</span></span><ChevronRight size={15} />
+            </button>
             <div className="aside-divider" />
             <span className="aside-caption">ACESSO RÁPIDO</span>
             <button className="queue utility" onClick={() => setShowClients(true)}><span className="queue-label"><Users size={16} /><span>Consultar clientes</span></span><ChevronRight size={15} /></button>
@@ -644,6 +667,7 @@ export function App() {
             {!initialLoading && orders.length > pageSize && <Pagination page={page} totalPages={totalPages} totalItems={orders.length} pageSize={pageSize} onChange={setPage} />}
           </section>
         </section>
+        </>}
       </main>
 
       {preview && (

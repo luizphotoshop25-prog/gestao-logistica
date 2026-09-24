@@ -162,6 +162,7 @@ function initializeDataDirectory(directory) {
       usuario TEXT NOT NULL UNIQUE COLLATE NOCASE,
       senha_hash TEXT NOT NULL,
       ativo INTEGER NOT NULL DEFAULT 1,
+      role TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('coordinator','employee')),
       criado_em TEXT NOT NULL,
       atualizado_em TEXT NOT NULL
     );
@@ -172,6 +173,24 @@ function initializeDataDirectory(directory) {
       criado_em TEXT NOT NULL,
       expira_em TEXT NOT NULL,
       revogado_em TEXT
+    );
+    CREATE TABLE IF NOT EXISTS solicitacoes (
+      id TEXT PRIMARY KEY,
+      descricao TEXT NOT NULL,
+      observacao TEXT,
+      sessao_codigo TEXT,
+      responsavel_usuario_id TEXT NOT NULL REFERENCES usuarios(id) ON DELETE RESTRICT,
+      criado_por_usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+      criado_por_nome TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+      prazo_em TEXT,
+      solicitada_em TEXT NOT NULL,
+      iniciado_em TEXT,
+      concluido_em TEXT,
+      cancelado_em TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
     );
     CREATE TABLE IF NOT EXISTS eventos (
       id TEXT PRIMARY KEY,
@@ -189,7 +208,10 @@ function initializeDataDirectory(directory) {
     CREATE INDEX IF NOT EXISTS idx_selecoes_email_pedido ON selecoes_email(pedido_id);
     CREATE INDEX IF NOT EXISTS idx_selecoes_email_sessao ON selecoes_email(sessao);
     CREATE INDEX IF NOT EXISTS idx_sessoes_token ON sessoes(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_solicitacoes_responsavel ON solicitacoes(responsavel_usuario_id,status,prazo_em);
+    CREATE INDEX IF NOT EXISTS idx_solicitacoes_status_prazo ON solicitacoes(status,prazo_em);
   `);
+  ensureUserRoleColumn();
   ensureClientColumns();
   db.exec("DROP INDEX IF EXISTS idx_clientes_siwin_cad; CREATE UNIQUE INDEX idx_clientes_siwin_cad ON clientes(siwin_cad);");
   const orderColumns = db.prepare("PRAGMA table_info(pedidos)").all().map((column) => column.name);
@@ -235,6 +257,13 @@ function ensureOrderColumns() {
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE pedidos ADD COLUMN ${name} ${type}`);
+  }
+}
+
+function ensureUserRoleColumn() {
+  const columns = db.prepare("PRAGMA table_info(usuarios)").all();
+  if (!columns.some((column) => column.name === "role")) {
+    db.exec("ALTER TABLE usuarios ADD COLUMN role TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('coordinator','employee'))");
   }
 }
 
@@ -1223,13 +1252,15 @@ function createUser(input) {
   const nome = clean(input?.nome);
   const usuario = clean(input?.usuario).toLowerCase();
   const senhaHash = clean(input?.senhaHash);
+  const role = clean(input?.role || "employee");
   if (!nome || !usuario || !senhaHash) return { ok: false, message: "Nome, usuário e senha são obrigatórios." };
   if (!/^[a-z0-9._-]{3,40}$/.test(usuario)) return { ok: false, message: "Usuário inválido." };
+  if (!["coordinator", "employee"].includes(role)) return { ok: false, message: "Perfil inválido." };
   try {
     const userId = id();
     const timestamp = now();
-    db.prepare("INSERT INTO usuarios (id,nome,usuario,senha_hash,ativo,criado_em,atualizado_em) VALUES (?,?,?,?,1,?,?)").run(userId, nome, usuario, senhaHash, timestamp, timestamp);
-    return { ok: true, user: { id: userId, nome, usuario, ativo: true } };
+    db.prepare("INSERT INTO usuarios (id,nome,usuario,senha_hash,ativo,role,criado_em,atualizado_em) VALUES (?,?,?,?,1,?,?,?)").run(userId, nome, usuario, senhaHash, role, timestamp, timestamp);
+    return { ok: true, user: { id: userId, nome, usuario, ativo: true, role } };
   } catch (error) {
     if (String(error.message).includes("UNIQUE")) return { ok: false, message: "Usuário já existe." };
     throw error;
@@ -1237,13 +1268,26 @@ function createUser(input) {
 }
 
 function getUserForLogin(usuario) { return db.prepare("SELECT * FROM usuarios WHERE usuario=? COLLATE NOCASE").get(clean(usuario)); }
+function listActiveUsers() { return db.prepare("SELECT id,nome,usuario,role FROM usuarios WHERE ativo=1 ORDER BY nome COLLATE NOCASE").all(); }
+function setUserRole(usuario, role) {
+  const normalizedRole = clean(role);
+  if (!["coordinator", "employee"].includes(normalizedRole)) return { ok: false, message: "Perfil inválido." };
+  const existing = db.prepare("SELECT id,role FROM usuarios WHERE usuario=? COLLATE NOCASE").get(clean(usuario));
+  if (!existing) return { ok: false, message: "Usuário não encontrado." };
+  if (existing.role === "coordinator" && normalizedRole === "employee"
+    && db.prepare("SELECT COUNT(*) count FROM usuarios WHERE ativo=1 AND role='coordinator'").get().count <= 1) {
+    return { ok: false, message: "Não é possível remover o último coordenador ativo." };
+  }
+  const result = db.prepare("UPDATE usuarios SET role=?,atualizado_em=? WHERE usuario=? COLLATE NOCASE").run(normalizedRole, now(), clean(usuario));
+  return { ok: result.changes === 1 };
+}
 function createSession(input) {
   const sessionId = id();
   db.prepare("INSERT INTO sessoes (id,usuario_id,token_hash,criado_em,expira_em) VALUES (?,?,?,?,?)").run(sessionId, input.usuarioId, input.tokenHash, now(), input.expiraEm);
   return sessionId;
 }
 function getSessionUser(tokenHash) {
-  return db.prepare(`SELECT u.id,u.nome,u.usuario,u.ativo,s.id sessao_id,s.expira_em
+  return db.prepare(`SELECT u.id,u.nome,u.usuario,u.ativo,u.role,s.id sessao_id,s.expira_em
     FROM sessoes s JOIN usuarios u ON u.id=s.usuario_id
     WHERE s.token_hash=? AND s.revogado_em IS NULL AND s.expira_em>?`).get(clean(tokenHash), now()) || null;
 }
@@ -1252,6 +1296,142 @@ function setUserActive(userId, active) {
   const result = db.prepare("UPDATE usuarios SET ativo=?,atualizado_em=? WHERE id=?").run(active ? 1 : 0, now(), clean(userId));
   if (!active) db.prepare("UPDATE sessoes SET revogado_em=? WHERE usuario_id=? AND revogado_em IS NULL").run(now(), clean(userId));
   return { ok: result.changes === 1 };
+}
+
+const solicitationSelect = `SELECT s.*,assignee.nome responsavel_nome,assignee.usuario responsavel_usuario,
+  creator.nome criado_por_nome_join FROM solicitacoes s
+  JOIN usuarios assignee ON assignee.id=s.responsavel_usuario_id
+  LEFT JOIN usuarios creator ON creator.id=s.criado_por_usuario_id`;
+
+function formatSolicitation(row) {
+  if (!row) return null;
+  const { criado_por_nome_join, ...item } = row;
+  const prazo = item.prazo_em ? Date.parse(item.prazo_em) : NaN;
+  return {
+    ...item,
+    criado_por_nome: criado_por_nome_join || item.criado_por_nome,
+    atrasada: Number.isFinite(prazo) && prazo < Date.now() && !["completed", "cancelled"].includes(item.status),
+  };
+}
+
+function listSolicitations({ userId, role } = {}) {
+  if (role !== "coordinator" && role !== "employee") return [];
+  if (role === "employee" && !userId) return [];
+  const where = role === "employee" ? "WHERE s.responsavel_usuario_id=?" : "";
+  const rows = db.prepare(`${solicitationSelect} ${where}
+    ORDER BY CASE s.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'completed' THEN 2 ELSE 3 END,
+    CASE WHEN s.prazo_em IS NULL THEN 1 ELSE 0 END,s.prazo_em,s.created_at DESC`)
+    .all(...(role === "employee" ? [userId] : []));
+  return rows.map(formatSolicitation);
+}
+
+function getSolicitation(solicitationId, { userId, role = "coordinator" } = {}) {
+  if (role !== "coordinator" && role !== "employee") return null;
+  if (role === "employee" && !userId) return null;
+  const where = role === "employee" ? " AND s.responsavel_usuario_id=?" : "";
+  const row = db.prepare(`${solicitationSelect} WHERE s.id=?${where}`)
+    .get(...(role === "employee" ? [clean(solicitationId), userId] : [clean(solicitationId)]));
+  return formatSolicitation(row);
+}
+
+function validateSolicitationInput(input, { partial = false } = {}) {
+  const values = {};
+  if (!partial || Object.hasOwn(input || {}, "descricao")) {
+    values.descricao = clean(input?.descricao);
+    if (!values.descricao || values.descricao.length > 2000) return { error: "A solicitação é obrigatória e deve ter até 2.000 caracteres." };
+  }
+  if (!partial || Object.hasOwn(input || {}, "observacao")) {
+    values.observacao = clean(input?.observacao) || null;
+    if ((values.observacao || "").length > 4000) return { error: "A observação deve ter até 4.000 caracteres." };
+  }
+  if (!partial || Object.hasOwn(input || {}, "sessao_codigo")) {
+    values.sessao_codigo = clean(input?.sessao_codigo).toUpperCase() || null;
+    if (values.sessao_codigo && !/^M\d{1,12}$/.test(values.sessao_codigo)) return { error: "Informe uma sessão válida, como M49999." };
+    if (values.sessao_codigo && !db.prepare("SELECT 1 FROM pedidos WHERE upper(sessao)=?").get(values.sessao_codigo)) return { error: "Sessão não encontrada." };
+  }
+  if (!partial || Object.hasOwn(input || {}, "responsavel_usuario_id")) {
+    values.responsavel_usuario_id = clean(input?.responsavel_usuario_id);
+    if (!values.responsavel_usuario_id) return { error: "Selecione um responsável." };
+    if (!db.prepare("SELECT 1 FROM usuarios WHERE id=? AND ativo=1").get(values.responsavel_usuario_id)) return { error: "O responsável precisa ser um usuário ativo." };
+  }
+  if (!partial || Object.hasOwn(input || {}, "prazo_em")) {
+    const raw = clean(input?.prazo_em);
+    if (raw && !Number.isFinite(Date.parse(raw))) return { error: "O prazo informado é inválido." };
+    values.prazo_em = raw ? new Date(raw).toISOString() : null;
+  }
+  return { values };
+}
+
+function createSolicitation(input) {
+  const validated = validateSolicitationInput(input);
+  if (validated.error) return { ok: false, message: validated.error };
+  const timestamp = now();
+  const solicitationId = id();
+  db.prepare(`INSERT INTO solicitacoes (id,descricao,observacao,sessao_codigo,responsavel_usuario_id,
+    criado_por_usuario_id,criado_por_nome,status,prazo_em,solicitada_em,created_at,updated_at,revision)
+    VALUES (?,?,?,?,?,?,?,'pending',?,?,?, ?,1)`)
+    .run(solicitationId, validated.values.descricao, validated.values.observacao, validated.values.sessao_codigo,
+      validated.values.responsavel_usuario_id, clean(input?.criado_por_usuario_id) || null,
+      clean(input?.criado_por_nome) || "Usuário local", validated.values.prazo_em, timestamp, timestamp, timestamp);
+  return { ok: true, solicitation: getSolicitation(solicitationId) };
+}
+
+function updateSolicitation({ id: solicitationId, revision, values = {} }) {
+  const expectedRevision = Number(revision);
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "Reabra a solicitação para obter sua revisão atual." };
+  const current = db.prepare("SELECT * FROM solicitacoes WHERE id=?").get(clean(solicitationId));
+  if (!current) return { ok: false, error: "NOT_FOUND", message: "Solicitação não encontrada." };
+  if (current.revision !== expectedRevision) return { ok: false, error: "REVISION_CONFLICT", revisionAtual: current.revision, message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de salvar." };
+  const validated = validateSolicitationInput(values, { partial: true });
+  if (validated.error) return { ok: false, message: validated.error };
+  const changed = Object.entries(validated.values).filter(([field, value]) => String(current[field] ?? "") !== String(value ?? ""));
+  if (!changed.length) return { ok: true, solicitation: getSolicitation(solicitationId), unchanged: true };
+  const assignments = changed.map(([field]) => `${field}=?`).join(",");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = db.prepare(`UPDATE solicitacoes SET ${assignments},updated_at=?,revision=revision+1 WHERE id=? AND revision=?`)
+      .run(...changed.map(([, value]) => value), now(), clean(solicitationId), expectedRevision);
+    if (result.changes !== 1) {
+      db.exec("ROLLBACK");
+      return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de salvar." };
+    }
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  return { ok: true, solicitation: getSolicitation(solicitationId) };
+}
+
+function transitionSolicitation({ id: solicitationId, revision, action, actorUserId, actorRole }) {
+  if (!(["coordinator", "employee"].includes(actorRole))) return { ok: false, error: "FORBIDDEN", message: "Perfil sem permissão para alterar solicitações." };
+  const expectedRevision = Number(revision);
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "Reabra a solicitação para obter sua revisão atual." };
+  const current = db.prepare("SELECT * FROM solicitacoes WHERE id=?").get(clean(solicitationId));
+  if (!current || (actorRole !== "coordinator" && current.responsavel_usuario_id !== actorUserId)) return { ok: false, error: "NOT_FOUND", message: "Solicitação não encontrada." };
+  if (current.revision !== expectedRevision) return { ok: false, error: "REVISION_CONFLICT", revisionAtual: current.revision, message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de continuar." };
+
+  let status;
+  const timestamp = now();
+  let startedAt = current.iniciado_em;
+  let completedAt = current.concluido_em;
+  let cancelledAt = current.cancelado_em;
+  if (action === "start" && current.status === "pending") { status = "in_progress"; startedAt = timestamp; }
+  else if (action === "complete" && ["pending", "in_progress"].includes(current.status)) { status = "completed"; completedAt = timestamp; }
+  else if (action === "cancel" && actorRole === "coordinator" && ["pending", "in_progress"].includes(current.status)) { status = "cancelled"; cancelledAt = timestamp; }
+  else if (action === "reopen" && actorRole === "coordinator" && ["completed", "cancelled"].includes(current.status)) {
+    status = "pending"; startedAt = null; completedAt = null; cancelledAt = null;
+  } else return { ok: false, error: "INVALID_TRANSITION", message: "Essa mudança de status não está disponível para esta solicitação." };
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = db.prepare(`UPDATE solicitacoes SET status=?,iniciado_em=?,concluido_em=?,cancelado_em=?,updated_at=?,revision=revision+1
+      WHERE id=? AND revision=?`)
+      .run(status, startedAt, completedAt, cancelledAt, timestamp, clean(solicitationId), expectedRevision);
+    if (result.changes !== 1) {
+      db.exec("ROLLBACK");
+      return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de continuar." };
+    }
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  return { ok: true, solicitation: getSolicitation(solicitationId) };
 }
 
 module.exports = {
@@ -1267,11 +1447,18 @@ module.exports = {
   getOrder,
   updateOrder,
   createUser,
+  listActiveUsers,
+  setUserRole,
   getUserForLogin,
   createSession,
   getSessionUser,
   revokeSession,
   setUserActive,
+  listSolicitations,
+  getSolicitation,
+  createSolicitation,
+  updateSolicitation,
+  transitionSolicitation,
   addAttachment,
   getAttachmentPath,
   getSiwinStatus,

@@ -27,6 +27,15 @@ npm run user:create
 
 Execute uma vez para cada pessoa. A senha é digitada no terminal e não deve ser registrada em arquivo.
 
+Solicitações usa os perfis `coordinator` e `employee`. Usuários antigos recebem `employee` na migração compatível. Para definir o coordenador de uma conta existente, use o comando administrativo no computador servidor, por exemplo:
+
+```powershell
+npm run user:role -- henrique coordinator
+npm run user:role -- funcionario_teste employee
+```
+
+Execute após o aplicativo/API inicializar o esquema atualizado; em instalações existentes, essa inicialização acrescenta o perfil padrão `employee` e a tabela de solicitações. O comando define o perfil da conta informada. Novos usuários criados pelo `user:create` perguntam o perfil durante o cadastro. O coordenador pode criar e administrar solicitações; funcionários veem e atualizam somente as que estão atribuídas a eles.
+
 ### Descobrir o IPv4
 
 ```powershell

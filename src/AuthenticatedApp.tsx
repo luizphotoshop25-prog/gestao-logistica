@@ -4,7 +4,7 @@ import { dataService } from "./services/dataService";
 
 export function AuthenticatedApp() {
   const httpMode = window.gestaoConfig.dataTransport === "http";
-  const [user, setUser] = useState<AuthUser | null>(httpMode ? null : { id: "ipc-local", nome: "Usuário local", usuario: "local" });
+  const [user, setUser] = useState<AuthUser | null>(httpMode ? null : { id: "ipc-local", nome: "Usuário local", usuario: "local", role: "coordinator" });
   const [loading, setLoading] = useState(httpMode);
   const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
@@ -21,5 +21,5 @@ export function AuthenticatedApp() {
   const logout = async () => { try { await dataService.logout(); } catch { /* Sessão local deve ser limpa mesmo sem rede. */ } finally { await window.gestaoSession.clear(); setUser(null); } };
   if (loading) return <div className="auth-screen"><p>Validando sessão…</p></div>;
   if (!user) return <div className="auth-screen"><form className="auth-card" onSubmit={login}><span>GESTÃO LOGÍSTICA</span><h1>Entrar</h1><label>Usuário<input autoFocus value={usuario} onChange={(event) => setUsuario(event.target.value)} /></label><label>Senha<input type="password" value={senha} onChange={(event) => setSenha(event.target.value)} /></label>{message && <p className="auth-error">{message}</p>}<button className="primary" type="submit">Entrar</button>{message.includes("conectar") && <button type="button" onClick={() => void restore()}>Tentar novamente</button>}</form></div>;
-  return <><App />{httpMode && <div className="current-user"><span>{user.nome}</span><button onClick={() => void logout()}>Sair</button></div>}</>;
+  return <><App currentUser={user} />{httpMode && <div className="current-user"><span>{user.nome}</span><button onClick={() => void logout()}>Sair</button></div>}</>;
 }

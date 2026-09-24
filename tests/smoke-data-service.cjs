@@ -15,7 +15,7 @@ async function main() {
   const { dataService, ipcDataService } = context.exports;
   assert.equal(dataService, ipcDataService);
   const delegatedMethods = Object.keys(dataService).filter((method) => !["login", "logout", "currentUser", "restoreSession"].includes(method));
-  assert.equal(delegatedMethods.length, 19);
+  assert.equal(delegatedMethods.length, 25);
   for (const method of delegatedMethods) {
     const args = method.startsWith("on") ? [() => {}] : [{ id: "synthetic" }, "synthetic"];
     const expected = method.startsWith("on") ? () => {} : Promise.resolve({ ok: true });
@@ -59,7 +59,7 @@ async function main() {
     payload.revisao = (await dataService.getOrder(id)).order.revisao;
     assert.equal((await dataService.updateOrder(payload)).unchanged, true);
     assert.equal((await dataService.dashboard()).dashboard.total, 1);
-    console.log("19 métodos: delegação, identidade dos retornos/callbacks, erros e CRUD sintético aprovados.");
+    console.log("25 métodos: delegação, identidade dos retornos/callbacks, erros e CRUD sintético aprovados.");
   } finally {
     database.close();
     assert.equal(path.dirname(root), path.resolve(os.tmpdir()));

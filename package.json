@@ -18,7 +18,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1 --port 8090 --strictPort\" \"wait-on http://127.0.0.1:8090 && electron .\"",
     "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit && node --check electron/main.cjs && node --check electron/client-config.cjs && node --check electron/preload.cjs && node --check electron/database.cjs && node --check electron/importer.cjs && node --check electron/siwin.cjs && node --check electron/thunderbird.cjs && node --check server/api-server.cjs && node --check server/lan-server.cjs && node --check scripts/create-user.cjs && node --check scripts/prepare-lan-pilot.cjs",
+    "check": "tsc --noEmit && node --check electron/main.cjs && node --check electron/client-config.cjs && node --check electron/preload.cjs && node --check electron/database.cjs && node --check electron/importer.cjs && node --check electron/siwin.cjs && node --check electron/thunderbird.cjs && node --check server/api-server.cjs && node --check server/lan-server.cjs && node --check scripts/create-user.cjs && node --check scripts/set-user-role.cjs && node --check scripts/prepare-lan-pilot.cjs",
     "capture:ui": "node tests/run-capture.cjs",
     "smoke:http": "node tests/smoke-http.cjs",
     "smoke:http-service": "node tests/smoke-http-data-service.cjs",
@@ -26,7 +26,9 @@
     "dist": "npm run build && electron-builder --win",
     "smoke:http-race": "node tests/smoke-http-revision-race.cjs",
     "user:create": "node scripts/create-user.cjs",
+    "user:role": "node scripts/set-user-role.cjs",
     "smoke:auth": "node tests/smoke-auth.cjs",
+    "smoke:solicitations": "node tests/smoke-solicitations.cjs && node tests/smoke-solicitation-date.cjs && node tests/smoke-solicitations-ipc.cjs && node tests/smoke-solicitations-http.cjs",
     "smoke:packaged": "node tests/smoke-packaged-runtime.cjs",
     "smoke:lan": "node tests/smoke-lan.cjs",
     "server:lan": "node server/lan-server.cjs",

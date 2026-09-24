@@ -76,6 +76,19 @@ function registerIpc() {
   handle("selection-email:mark", (input) => database.markSelectionEmail(input));
   handle("clients:list", (options) => ({ ok: true, rows: database.listClients(options) }));
   handle("dashboard:get", () => ({ ok: true, dashboard: database.getDashboard() }));
+  handle("solicitations:list", () => ({ ok: true, rows: database.listSolicitations({ role: "coordinator" }) }));
+  handle("solicitations:get", (id) => {
+    const solicitation = database.getSolicitation(id, { role: "coordinator" });
+    return solicitation ? { ok: true, solicitation } : { ok: false, message: "Solicitação não encontrada." };
+  });
+  handle("solicitations:assignees", () => ({ ok: true, rows: database.listActiveUsers() }));
+  handle("solicitations:create", (input) => database.createSolicitation({
+    ...input,
+    criado_por_usuario_id: null,
+    criado_por_nome: "Usuário local",
+  }));
+  handle("solicitations:update", (input) => database.updateSolicitation(input));
+  handle("solicitations:transition", (input) => database.transitionSolicitation({ ...input, actorRole: "coordinator" }));
   handle("siwin:status", () => database.getSiwinStatus());
   handle("siwin:sync", () => runSiwinSync());
   handle("thunderbird:sync", () => runThunderbirdSync());

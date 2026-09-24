@@ -25,7 +25,7 @@ function verifyPassword(password, stored) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 function cleanHash(value) { return String(value || ""); }
-function publicUser(user) { return user ? { id: user.id, nome: user.nome, usuario: user.usuario } : null; }
+function publicUser(user) { return user ? { id: user.id, nome: user.nome, usuario: user.usuario, role: user.role || "employee" } : null; }
 function readBearer(request) {
   const header = String(request.headers.authorization || "");
   return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
@@ -155,6 +155,50 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       }
       const currentUser = await requireSession(request);
       if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
+      if (request.method === "GET" && url.pathname === "/api/solicitations/assignees") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis."), responseOrigin);
+        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/solicitations") {
+        return sendJson(response, 200, { ok: true, rows: database.listSolicitations({ userId: currentUser.id, role: currentUser.role }) }, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/solicitations") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode criar solicitações."), responseOrigin);
+        const body = await readJson(request);
+        const result = database.createSolicitation({
+          descricao: body.descricao,
+          observacao: body.observacao,
+          sessao_codigo: body.sessao_codigo,
+          responsavel_usuario_id: body.responsavel_usuario_id,
+          prazo_em: body.prazo_em,
+          criado_por_usuario_id: currentUser.id,
+          criado_por_nome: currentUser.nome,
+        });
+        return sendJson(response, result.ok ? 201 : 400, result, responseOrigin);
+      }
+      const solicitationAction = url.pathname.match(/^\/api\/solicitations\/([^/]+)\/(start|complete|cancel|reopen)$/);
+      if (solicitationAction && request.method === "POST") {
+        const [, solicitationId, action] = solicitationAction;
+        if (["cancel", "reopen"].includes(action) && currentUser.role !== "coordinator")
+          return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode cancelar ou reabrir solicitações."), responseOrigin);
+        const body = await readJson(request);
+        const result = database.transitionSolicitation({ id: decodeURIComponent(solicitationId), revision: body.revision, action, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const solicitation = url.pathname.match(/^\/api\/solicitations\/([^/]+)$/);
+      if (solicitation && request.method === "GET") {
+        const item = database.getSolicitation(decodeURIComponent(solicitation[1]), { userId: currentUser.id, role: currentUser.role });
+        return item ? sendJson(response, 200, { ok: true, solicitation: item }, responseOrigin)
+          : sendJson(response, 404, errorBody("NOT_FOUND", "Solicitação não encontrada."), responseOrigin);
+      }
+      if (solicitation && request.method === "PATCH") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode editar solicitações."), responseOrigin);
+        const body = await readJson(request);
+        const result = database.updateSolicitation({ id: decodeURIComponent(solicitation[1]), revision: body.revision, values: body.values });
+        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
       if (request.method === "GET" && url.pathname === "/api/orders") {
         const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all" });
         return sendJson(response, 200, { ok: true, rows }, responseOrigin);

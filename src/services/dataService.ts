@@ -18,6 +18,12 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "addAttachment"
   | "openAttachment"
   | "openExternal"
+  | "listSolicitations"
+  | "getSolicitation"
+  | "listSolicitationAssignees"
+  | "createSolicitation"
+  | "updateSolicitation"
+  | "transitionSolicitation"
 > & {
   login(input: { usuario: string; senha: string }): Promise<AuthResult>;
   logout(): Promise<{ ok: boolean }>;
@@ -28,7 +34,7 @@ export type DataService = Pick<Window["gestaoAPI"],
 export const ipcDataService: DataService = {
   login: async () => ({ ok: false, message: "Login não é exigido no modo IPC." }),
   logout: async () => ({ ok: true }),
-  currentUser: async () => ({ ok: true, user: { id: "ipc-local", nome: "Usuário local", usuario: "local" } }),
+  currentUser: async () => ({ ok: true, user: { id: "ipc-local", nome: "Usuário local", usuario: "local", role: "coordinator" } }),
   restoreSession: () => {},
   dashboard: () => window.gestaoAPI.dashboard(),
   siwinStatus: () => window.gestaoAPI.siwinStatus(),
@@ -49,6 +55,12 @@ export const ipcDataService: DataService = {
   addAttachment: (orderId, type) => window.gestaoAPI.addAttachment(orderId, type),
   openAttachment: (attachmentId) => window.gestaoAPI.openAttachment(attachmentId),
   openExternal: (url) => window.gestaoAPI.openExternal(url),
+  listSolicitations: () => window.gestaoAPI.listSolicitations(),
+  getSolicitation: (id) => window.gestaoAPI.getSolicitation(id),
+  listSolicitationAssignees: () => window.gestaoAPI.listSolicitationAssignees(),
+  createSolicitation: (input) => window.gestaoAPI.createSolicitation(input),
+  updateSolicitation: (input) => window.gestaoAPI.updateSolicitation(input),
+  transitionSolicitation: (input) => window.gestaoAPI.transitionSolicitation(input),
 };
 
 const unsupportedMessage = "Indisponível no transporte HTTP de protótipo.";
@@ -113,6 +125,12 @@ export function createHttpDataService(apiUrl: string): DataService {
     addAttachment: async () => unsupported(),
     openAttachment: async () => unsupported(),
     openExternal: async () => unsupported(),
+    listSolicitations: () => request("/api/solicitations"),
+    getSolicitation: (id) => request(`/api/solicitations/${encodeURIComponent(id)}`),
+    listSolicitationAssignees: () => request("/api/solicitations/assignees"),
+    createSolicitation: (input) => request("/api/solicitations", { method: "POST", body: JSON.stringify(input) }),
+    updateSolicitation: (input) => request(`/api/solicitations/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revision: input.revision, values: input.values }) }),
+    transitionSolicitation: ({ id, revision, action }) => request(`/api/solicitations/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ revision }) }),
   };
 }
 

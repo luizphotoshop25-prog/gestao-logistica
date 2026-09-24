@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   addAttachment: (orderId, type) => ipcRenderer.invoke("attachments:add", orderId, type),
   openAttachment: (attachmentId) => ipcRenderer.invoke("attachments:open", attachmentId),
   openExternal: (url) => ipcRenderer.invoke("external:open", url),
+  listSolicitations: () => ipcRenderer.invoke("solicitations:list"),
+  getSolicitation: (id) => ipcRenderer.invoke("solicitations:get", id),
+  listSolicitationAssignees: () => ipcRenderer.invoke("solicitations:assignees"),
+  createSolicitation: (input) => ipcRenderer.invoke("solicitations:create", input),
+  updateSolicitation: (input) => ipcRenderer.invoke("solicitations:update", input),
+  transitionSolicitation: (input) => ipcRenderer.invoke("solicitations:transition", input),
 });
 
 contextBridge.exposeInMainWorld("gestaoConfig", {
