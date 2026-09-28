@@ -13,7 +13,7 @@ type Props = {
 };
 
 const shortcuts = [
-  { label: "Abrir pedidos que precisam de mim", hint: "Fila operacional", icon: Activity, action: "needs_me" },
+  { label: "Abrir pedidos com ação da equipe", hint: "Fila operacional", icon: Activity, action: "needs_me" },
   { label: "Abrir alertas operacionais", hint: "Erros e atrasos", icon: AlertTriangle, action: "alerts" },
   { label: "Abrir pedidos aguardando terceiros", hint: "Cliente, tratamento ou fornecedor", icon: Clock3, action: "waiting" },
 ];

@@ -145,6 +145,9 @@ app.whenReady().then(() => {
         window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
         await delay(180);
         await window.webContents.executeJavaScript("document.querySelector('.session-link').click()");
+        await waitForSelector(window, ".order-preview");
+        await waitForSelector(window, ".order-preview .ui-button-primary");
+        await window.webContents.executeJavaScript("document.querySelector('.order-preview .ui-button-primary').click()");
         await waitForSelector(window, ".detail-modal");
         await capture(window, detailOutputPath);
 
@@ -160,7 +163,7 @@ app.whenReady().then(() => {
 
         await window.webContents.executeJavaScript("document.querySelector('.detail-modal button[aria-label=\"Fechar ficha\"]')?.click()");
         await delay(220);
-        await window.webContents.executeJavaScript("[...document.querySelectorAll('button.queue.utility')].find((button) => button.innerText.includes('Solicitações'))?.click()");
+        await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[2].click()");
         await waitForSelector(window, ".solicitations-page");
         await waitForSelector(window, ".solicitation-card");
         const filterAndSearchPassed = await window.webContents.executeJavaScript(`(() => {

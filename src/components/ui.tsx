@@ -7,6 +7,11 @@ export function ViewState({ kind, title, description, onRetry }: { kind: 'loadin
 // Base para os próximos formulários e previews; a ficha atual permanece intacta.
 export function Overlay({ title, children, onClose, variant = 'modal' }: { title: string; children: ReactNode; onClose: () => void; variant?: 'modal' | 'drawer' }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => { const previous = document.activeElement as HTMLElement | null; ref.current?.showModal(); return () => { previous?.focus(); }; }, []);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = ref.current;
+    dialog?.showModal();
+    return () => { dialog?.close(); previous?.focus(); };
+  }, []);
   return <dialog ref={ref} className={'ui-overlay ui-' + variant} aria-label={title} onCancel={event => { event.preventDefault(); onClose(); }}><header><h2>{title}</h2><button className="ui-button" aria-label="Fechar" onClick={onClose}>×</button></header>{children}</dialog>;
 }

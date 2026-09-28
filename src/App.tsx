@@ -2,19 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { dataService } from "./services/dataService";
 import {
   Activity,
-  AlertCircle,
   AlertTriangle,
-  CalendarClock,
   Check,
   ChevronRight,
   ClipboardList,
-  Clock3,
   Database,
-  Inbox,
   Image as ImageIcon,
-  Keyboard,
   Layers3,
-  ListFilter,
   ExternalLink,
   Paperclip,
   PackageCheck,
@@ -22,10 +16,11 @@ import {
   Save,
   Search,
   Send,
-  ShieldCheck,
   Users,
   X,
 } from "lucide-react";
+import { OrderPreview } from "./components/OrderPreview";
+import { ViewState } from "./components/ui";
 import { Central } from "./components/Central";
 import { CommandPalette } from "./components/CommandPalette";
 import { Hint } from "./components/Hint";
@@ -33,7 +28,7 @@ import { IntegrationMenu } from "./components/IntegrationMenu";
 import { OrderActionsMenu } from "./components/OrderActionsMenu";
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
-import { SolicitationIndicator, SolicitationsPage } from "./components/SolicitationsPage";
+import { SolicitationsPage } from "./components/SolicitationsPage";
 
 const stageLabels: Record<string, string> = {
   sessao_criada: "Sessão criada",
@@ -70,14 +65,8 @@ type ConfirmationState = {
   onConfirm: () => void | Promise<void>;
 };
 
-const deskQueues = [
-  ["needs_me", "Precisa de mim", "needsMe"],
-  ["waiting", "Aguardando terceiros", "waiting"],
-  ["alerts", "Alertas", "alerts"],
-] as const;
-
 const filterLabels: Record<string, string> = {
-  needs_me: "Precisa de mim",
+  needs_me: "Ação da equipe",
   waiting: "Aguardando terceiros",
   alerts: "Alertas operacionais",
   new_selections: "Seleções novas",
@@ -102,17 +91,12 @@ const formatCurrency = (value: number) => new Intl.NumberFormat("pt-BR", {
   style: "currency", currency: "BRL",
 }).format(Number(value) || 0);
 
-const formatLastMovement = (value: string | null) => {
-  if (!value) return "—";
-  const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86400000));
-  if (days === 0) return "Hoje";
-  if (days === 1) return "Ontem";
-  return `Há ${days} dias`;
-};
-
 export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout?: () => void }) {
   const [centralQueue, setCentralQueue] = useState("needs_me");
   const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
+  const [orderPreviewId, setOrderPreviewId] = useState<string | null>(null);
+  const [listError, setListError] = useState("");
+  const [searchScope, setSearchScope] = useState<"queue" | "all">("queue");
   const [orders, setOrders] = useState<Order[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary>({
     total: 0,
@@ -168,27 +152,29 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const reload = useCallback(async () => {
     const requestId = ++listRequestRef.current;
     setInitialLoading(true);
+    setListError("");
     try {
       const [ordersResult, dashboardResult] = await Promise.all([
-        dataService.listOrders({ search, filter: search.trim() ? "all" : filter }),
+        dataService.listOrders({ search, filter: search.trim() && searchScope === "all" ? "all" : filter }),
         dataService.dashboard(),
       ]);
       if (requestId !== listRequestRef.current) return;
-      if (ordersResult.ok) setOrders(ordersResult.rows);
+      if (!ordersResult.ok) throw new Error("Não foi possível carregar os pedidos.");
+      setOrders(ordersResult.rows);
       if (dashboardResult.ok) setDashboard(dashboardResult.dashboard);
       setSelectedIds([]);
     } catch (error) {
-      if (requestId === listRequestRef.current) setNotice(error instanceof Error ? error.message : "Não foi possível carregar os dados.");
+      if (requestId === listRequestRef.current) setListError(error instanceof Error ? error.message : "Não foi possível carregar os dados.");
     } finally {
       if (requestId === listRequestRef.current) setInitialLoading(false);
     }
-  }, [search, filter]);
+  }, [search, filter, searchScope]);
 
   useEffect(() => {
     window.localStorage.setItem("gestao:last-filter", filter);
     window.localStorage.setItem("gestao:last-sort", sortMode);
     setPage(1);
-  }, [filter, search, sortMode]);
+  }, [filter, search, sortMode, searchScope]);
 
   useEffect(() => {
     if (!commandOpen) return;
@@ -420,6 +406,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   };
 
   const executeRecommended = (order: Order) => {
+    if (window.gestaoConfig.dataTransport === "http") return openOrder(order.id);
     if (order.etapa === "tratamento_concluido") return advance(order);
     const action = order.etapa === "etiqueta_criada" ? "add_shipment"
       : order.etapa === "em_remessa" && order.acao_recomendada === "Postar remessa" ? "posted" : null;
@@ -445,17 +432,12 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   };
 
   const rowActionLabel = (order: Order) => {
+    if (window.gestaoConfig.dataTransport === "http") return "Abrir ficha";
     if (order.etapa === "tratamento_concluido") return "Registrar envio";
     if (order.etapa === "etiqueta_criada") return "Incluir na remessa";
     if (order.etapa === "em_remessa" && order.acao_recomendada === "Postar remessa") return "Registrar postagem";
     return "Abrir ficha";
   };
-
-  const workKind = (order: Order) => order.operacional_bucket === "waiting"
-    ? { label: "Aguardando terceiro", className: "waiting" }
-    : order.operacional_bucket === "alerts"
-      ? { label: "Pendência", className: "alert" }
-      : { label: "Ação sua", className: "manual" };
 
   const attach = async (type: string) => {
     if (!detail) return;
@@ -481,6 +463,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     return rows;
   }, [orders, sortMode]);
   const totalPages = Math.max(1, Math.ceil(sortedOrders.length / pageSize));
+  useEffect(() => { setPage(current => Math.min(current, totalPages)); }, [totalPages]);
   const visibleOrders = sortedOrders.slice((page - 1) * pageSize, page * pageSize);
   const visibleOrderIds = visibleOrders.map((order) => order.id);
   const allVisibleSelected = visibleOrderIds.length > 0 && visibleOrderIds.every((id) => selectedIds.includes(id));
@@ -563,58 +546,19 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
           onOpenOrder={(session) => void openSolicitationSession(session)}
           initialSelection={centralTask}
         /> : <>
-        <section className="operations-overview">
-          <div className="overview-heading">
-            <div><span className="section-kicker">VISÃO OPERACIONAL</span><h2>O que exige atenção agora</h2><p>Prioridades calculadas a partir do fluxo e dos prazos registrados.</p></div>
-            <span className="today-label"><CalendarClock size={15} /> {new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).format(new Date())}</span>
-          </div>
-          <div className="signal-grid">
-            <button className={`signal-card selection ${filter === "new_selections" ? "active" : ""}`} onClick={() => setFilter("new_selections")}>
-              <span className="signal-icon"><Inbox size={19} /></span><span className="signal-copy"><strong>{dashboard.queues.newSelections}</strong><span>Seleções novas</span><small>Conferir e separar</small></span><ChevronRight size={17} />
-            </button>
-            <button className={`signal-card deadline ${filter === "due_3" ? "active" : ""}`} onClick={() => setFilter("due_3")}>
-              <span className="signal-icon"><Clock3 size={19} /></span><span className="signal-copy"><strong>{dashboard.queues.due3}</strong><span>Vencem em até 3 dias</span><small>Antecipar tratamento</small></span><ChevronRight size={17} />
-            </button>
-            <button className={`signal-card danger ${filter === "alerts" ? "active" : ""}`} onClick={() => setFilter("alerts")}>
-              <span className="signal-icon"><AlertCircle size={19} /></span><span className="signal-copy"><strong>{dashboard.queues.alerts}</strong><span>Alertas operacionais</span><small>Erros e atrasos</small></span><ChevronRight size={17} />
-            </button>
-            <button className={`signal-card shipping ${filter === "ready_label" ? "active" : ""}`} onClick={() => setFilter("ready_label")}>
-              <span className="signal-icon"><PackageOpen size={19} /></span><span className="signal-copy"><strong>{dashboard.queues.readyLabel}</strong><span>Prontas para etiqueta</span><small>Preparar envio</small></span><ChevronRight size={17} />
-            </button>
-          </div>
-          {currentUser.role === "employee" && <SolicitationIndicator onOpen={() => setWorkspacePage("solicitations")} />}
-        </section>
-        <section className="workspace">
-          <aside>
-            <div className="aside-heading"><span className="section-kicker">FILAS</span><h2>Minha mesa</h2></div>
-            {deskQueues.map(([key, label, countKey]) => (
-              <button className={`queue ${key === "alerts" ? "alert-queue" : ""} ${filter === key ? "active" : ""}`} onClick={() => setFilter(key)} key={key}>
-                <span className="queue-label">{key === "needs_me" ? <Activity size={16} /> : key === "waiting" ? <Clock3 size={16} /> : <AlertTriangle size={16} />}<span>{label}</span></span><b>{dashboard.queues[countKey]}</b>
-              </button>
-            ))}
-            <button className="queue utility" onClick={() => setWorkspacePage("solicitations")}>
-              <span className="queue-label"><ClipboardList size={16} /><span>Solicitações</span></span><ChevronRight size={15} />
-            </button>
-            <div className="aside-divider" />
-            <span className="aside-caption">ACESSO RÁPIDO</span>
-            <button className="queue utility" onClick={() => setShowClients(true)}><span className="queue-label"><Users size={16} /><span>Consultar clientes</span></span><ChevronRight size={15} /></button>
-            <div className="rule-card">
-              <CalendarClock size={19} />
-              <div><strong>Prazos corridos</strong><span>Tratamento: 20 dias · Máximo: 60 dias</span></div>
-            </div>
-            <div className="safety-card"><ShieldCheck size={18} /><div><strong>Integração protegida</strong><span>O SIWIN é consultado somente para leitura.</span></div></div>
-          </aside>
-
+        <section className="orders-screen">
+          <div className="central-heading"><div><span className="section-kicker">OPERAÇÃO</span><h1>Pedidos</h1><p>Sessões, próximas ações e prazos da equipe.</p></div><button className="ui-button" onClick={() => void reload()} disabled={initialLoading}>Atualizar</button></div>
           <section className="orders-panel">
-            <div className="panel-head">
-              <div className="panel-title"><span className="section-kicker">PEDIDOS</span><h2>{search.trim() ? "Resultados da busca" : filterLabels[filter] || "Pedidos"}</h2><p><strong>{orders.length}</strong> registro(s) nesta fila</p></div>
-              <div className="panel-tools">
-                <button className={`bulk-toggle ${bulkMode ? "active" : ""}`} onClick={() => { setBulkMode(!bulkMode); setSelectedIds([]); }}>{bulkMode ? "Cancelar seleção" : "Selecionar vários"}</button>
-                <label className="sort-control" title="Ordenar pedidos"><ListFilter size={15} /><select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Ordenar pedidos"><option value="priority">Prioridade da fila</option><option value="deadline">Prazo mais próximo</option><option value="recent">Movimentação recente</option><option value="client">Nome do cliente</option></select></label>
-                <label className="search"><Search size={17} /><input ref={searchInputRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Sessão, cliente, telefone, e-mail, CAD ou rastreio" /><kbd>/</kbd></label>
-                <Hint label="Busca rápida e comandos (Ctrl+K)"><button className="command-trigger" onClick={() => setCommandOpen(true)}><Keyboard size={16} /><kbd>Ctrl K</kbd></button></Hint>
-              </div>
+            <div className="ui-tabs orders-queues" aria-label="Filas de pedidos">
+              {[["needs_me", "Ação da equipe"], ["waiting", "Aguardando terceiros"], ["alerts", "Alertas"], ["all", "Todos os pedidos"]].map(([key, label]) => <button key={key} aria-pressed={filter === key} onClick={() => { setFilter(key); setSearchScope("queue"); }}>{label}</button>)}
             </div>
+            <div className="orders-toolbar">
+              <label className="orders-search"><Search size={17} /><input ref={searchInputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Sessão, cliente, telefone, CAD ou rastreio" aria-label="Buscar pedidos" /><kbd>/</kbd></label>
+              <label className="orders-control">Buscar em<select value={searchScope} onChange={event => setSearchScope(event.target.value as "queue" | "all")}><option value="queue">Fila selecionada</option><option value="all">Todos os pedidos</option></select></label>
+              <label className="orders-control">Ordenar por<select value={sortMode} onChange={event => setSortMode(event.target.value)}><option value="priority">Prioridade da fila</option><option value="deadline">Prazo mais próximo</option><option value="recent">Movimentação recente</option><option value="client">Nome do cliente</option></select></label>
+              {window.gestaoConfig.dataTransport !== "http" && <button className="ui-button" onClick={() => { setBulkMode(!bulkMode); setSelectedIds([]); }}>{bulkMode ? "Cancelar seleção" : "Selecionar vários"}</button>}
+            </div>
+            <div className="orders-context"><span>{search.trim() && searchScope === "all" ? "Busca em todos os pedidos" : filterLabels[filter] || "Todos os pedidos"} · {initialLoading ? "Carregando…" : listError ? "Consulta indisponível" : orders.length + " pedidos"}</span>{search && <button className="orders-clear" onClick={() => setSearch("")}>Limpar busca</button>}{!["needs_me", "waiting", "alerts", "all"].includes(filter) && <button className="orders-clear" onClick={() => setFilter("all")}>Remover filtro</button>}</div>
             {bulkMode && <div className="bulk-bar">
               <button className="bulk-select-all" onClick={toggleVisibleOrders}>{allVisibleSelected ? "Desmarcar página" : `Selecionar página (${visibleOrderIds.length})`}</button>
               <strong>{selectedIds.length} selecionado(s)</strong>
@@ -626,53 +570,32 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               <button onClick={() => runBulkAction("conclude_previous")} disabled={busy || !selectedIds.length}>Concluído anteriormente</button>
               <button onClick={() => runBulkAction("activate")} disabled={busy || !selectedIds.length}>Reativar</button>
             </div>}
-            <div className="table-wrap">
-              <table>
-                <caption className="sr-only">Pedidos da fila operacional selecionada</caption>
-                <thead><tr><th>Sessão</th><th>Cliente</th><th>Próxima ação</th><th>Prazo / urgência</th><th>Seleção</th><th>Fotos cobradas</th><th>Última movimentação</th><th></th></tr></thead>
+            {listError ? <ViewState kind="error" title={listError} onRetry={() => void reload()} /> : <div className="table-wrap orders-table-wrap">
+              <table className="orders-table">
+                <caption className="sr-only">Pedidos da fila selecionada. Clique na sessão para consultar a prévia.</caption>
+                <thead><tr>{bulkMode && <th scope="col">Selecionar</th>}<th scope="col">Sessão / cliente</th><th scope="col">Próxima ação / etapa</th><th scope="col">Prazo de tratamento</th><th scope="col">Depende de</th><th scope="col">Fotos</th><th scope="col">Ações</th></tr></thead>
                 <tbody>
-                  {initialLoading && <TableSkeleton rows={7} columns={8} />}
-                  {!initialLoading && visibleOrders.map((order) => {
-                    const kind = workKind(order);
-                    return (
-                      <tr key={order.id} className={`clickable-row row-${order.operacional_bucket || "history"}`} onDoubleClick={() => openOrder(order.id)}>
-                        <td><button className="session-link" onClick={() => openOrder(order.id)}>{order.sessao}</button></td>
-                        <td><button className={`client-link ${!order.cliente_nome ? "missing" : ""}`} onClick={() => openOrder(order.id)}>{order.cliente_nome || "Identificar cliente"}</button></td>
-                        <td><strong className="recommended-action">{order.acao_recomendada}</strong><div className="action-meta"><span className={`work-kind ${kind.className}`}>{kind.label}</span><small className="responsibility">{order.responsavel_atual} · {stageLabels[order.etapa] || order.etapa}</small></div></td>
-                        <td>{order.urgencia_texto ? <span className="urgency">{order.urgencia_texto}</span> : <span>{formatDate(order.prazo_tratamento_em)}</span>}</td>
-                        <td>{formatDate(order.selecao_finalizada_em)}</td>
-                        <td>{order.fotos_quantidade ?? "—"}</td>
-                        <td>{formatLastMovement(order.ultima_movimentacao_em)}</td>
-                        <td className="row-actions">
-                          {bulkMode && <button className={`select-order ${selectedIds.includes(order.id) ? "selected" : ""}`} onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedIds(selectedIds.includes(order.id) ? selectedIds.filter((item) => item !== order.id) : [...selectedIds, order.id]);
-                          }}>{selectedIds.includes(order.id) ? "Selecionado" : "Marcar"}</button>}
-                           <button className="advance" onClick={(event) => {
-                            event.stopPropagation();
-                             void executeRecommended(order);
-                           }} disabled={busy}>{rowActionLabel(order)}<ChevronRight size={15} /></button>
-                           <OrderActionsMenu
-                             session={order.sessao}
-                             actionLabel={rowActionLabel(order)}
-                             disabled={busy}
-                             onOpen={() => void openOrder(order.id)}
-                             onExecute={() => void executeRecommended(order)}
-                             onCopy={() => void copySession(order.sessao)}
-                           />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!initialLoading && !orders.length && <tr><td colSpan={8} className="empty"><div className="empty-state"><span><Search size={22} /></span><strong>{search.trim() ? "Nenhum pedido encontrado" : "Nenhuma pendência nesta fila"}</strong><p>{search.trim() ? "Confira o termo pesquisado ou limpe a busca para visualizar a fila completa." : "Tudo certo por aqui. Escolha outra fila operacional para continuar."}</p>{search.trim() && <button onClick={() => setSearch("")}>Limpar busca</button>}</div></td></tr>}
+                  {initialLoading && <TableSkeleton rows={7} columns={bulkMode ? 7 : 6} />}
+                  {!initialLoading && visibleOrders.map(order => <tr key={order.id} className={orderPreviewId === order.id ? "order-selected" : ""}>
+                    {bulkMode && <td><input type="checkbox" aria-label={"Selecionar sessão " + order.sessao} checked={selectedIds.includes(order.id)} onChange={event => setSelectedIds(event.target.checked ? [...selectedIds, order.id] : selectedIds.filter(id => id !== order.id))} /></td>}
+                    <td><button className="session-link" onClick={() => setOrderPreviewId(order.id)} aria-label={"Consultar sessão " + order.sessao}>{order.sessao}</button><span className="order-secondary">{order.cliente_nome || "Cliente não identificado"}</span></td>
+                    <td><strong className="order-next">{order.acao_recomendada}</strong><span className="order-secondary">{stageLabels[order.etapa] || order.etapa}</span></td>
+                    <td><strong className="order-date">{formatDate(order.prazo_tratamento_em)}</strong>{order.urgencia_texto && <span className="order-warning">{order.urgencia_texto}</span>}</td>
+                    <td>{order.responsavel_atual === "Você" ? "Equipe" : order.responsavel_atual}</td>
+                    <td>{order.fotos_quantidade ?? "—"}</td>
+                    <td><div className="orders-actions"><button className="ui-button" onClick={() => setOrderPreviewId(order.id)}>Consultar</button><OrderActionsMenu session={order.sessao} actionLabel={rowActionLabel(order)} disabled={busy} onOpen={() => void openOrder(order.id)} onExecute={() => void executeRecommended(order)} onCopy={() => void copySession(order.sessao)} /></div></td>
+                  </tr>)}
                 </tbody>
               </table>
-            </div>
-            {!initialLoading && orders.length > pageSize && <Pagination page={page} totalPages={totalPages} totalItems={orders.length} pageSize={pageSize} onChange={setPage} />}
+              {!initialLoading && !orders.length && <ViewState kind="empty" title={search ? "Nenhum pedido encontrado" : "Nenhuma pendência nesta fila"} description={search ? "Revise o termo ou escolha buscar em todos os pedidos." : "Selecione outra fila para continuar."} />}
+            </div>}
+            {!initialLoading && !listError && orders.length > 0 && <Pagination page={page} totalPages={totalPages} totalItems={orders.length} pageSize={pageSize} onChange={setPage} />}
           </section>
         </section>
         </>}
       </main>
+
+      {orderPreviewId && <OrderPreview orderId={orderPreviewId} onClose={() => setOrderPreviewId(null)} onOpenFull={id => { setOrderPreviewId(null); void openOrder(id); }} />}
 
       {preview && (
         <div className="modal-backdrop">
