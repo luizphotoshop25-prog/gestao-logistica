@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, CircleCheck, ClipboardList, Clock3, Pencil, Plus, RotateCcw, Search, X } from "lucide-react";
 import { dataService } from "../services/dataService";
-import { formatSolicitationDate, formatSolicitationDeadline, isSolicitationDueToday, toLocalDateTimeInput } from "../utils/solicitation-date";
+import { formatSolicitationDate, formatSolicitationDeadline, isSolicitationDueToday, sortSolicitationsByUrgency, toLocalDateTimeInput } from "../utils/solicitation-date";
 
 type Props = {
   currentUser: AuthUser;
@@ -126,14 +126,23 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }
     return () => { active = false; window.clearTimeout(timer); };
   }, [sessionQuery]);
 
-  const visibleItems = useMemo(() => items.filter((item) => {
+  const visibleItems = useMemo(() => sortSolicitationsByUrgency(items.filter((item) => {
     const matchesFilter = filter === "open" ? ["pending", "in_progress"].includes(item.status) : item.status === filter;
     const query = search.trim().toLocaleLowerCase("pt-BR");
     const matchesSearch = !query || item.descricao.toLocaleLowerCase("pt-BR").includes(query)
       || (item.sessao_codigo || "").toLocaleLowerCase("pt-BR").includes(query)
       || item.responsavel_nome.toLocaleLowerCase("pt-BR").includes(query);
     return matchesFilter && matchesSearch;
-  }), [filter, items, search]);
+  })), [filter, items, search]);
+  const counts = useMemo(() => ({
+    open: items.filter((item) => ["pending", "in_progress"].includes(item.status)).length,
+    pending: items.filter((item) => item.status === "pending").length,
+    in_progress: items.filter((item) => item.status === "in_progress").length,
+    completed: items.filter((item) => item.status === "completed").length,
+    cancelled: items.filter((item) => item.status === "cancelled").length,
+    overdue: items.filter((item) => item.atrasada).length,
+  }), [items]);
+  const emptyFilterLabel = statusFilters.find(([key]) => key === filter)?.[1].toLocaleLowerCase("pt-BR") || "solicitações";
 
   const openDetail = async (item: Solicitation) => {
     setBusy(true);
@@ -219,7 +228,7 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }
     finally { setBusy(false); }
   };
 
-  const statusText = (item: Solicitation) => item.atrasada ? "Atrasada" : statusLabels[item.status];
+  const deadlineTone = (item: Solicitation) => item.status === "completed" || item.status === "cancelled" ? "closed" : item.atrasada ? "overdue" : !item.prazo_em ? "none" : isSolicitationDueToday(item.prazo_em) ? "today" : "normal";
   const itemCanStart = selected?.status === "pending";
   const itemCanComplete = selected && ["pending", "in_progress"].includes(selected.status);
   const itemCanCancel = isCoordinator && selected && ["pending", "in_progress"].includes(selected.status);
@@ -227,7 +236,7 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }
 
   return <section className="solicitations-page">
     <header className="solicitations-heading">
-      <div>
+      <div className="solicitations-heading-copy">
         <button className="solicitations-back" onClick={onBack}><ArrowLeft size={15} /> Pedidos</button>
         <span className="section-kicker">EQUIPE</span>
         <h2>Solicitações</h2>
@@ -236,28 +245,39 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }
       {isCoordinator && <button className="primary solicitations-new" onClick={() => { setForm(emptyForm); setSessionQuery(""); setCreateOpen(true); }}><Plus size={16} /> Nova solicitação</button>}
     </header>
 
+    <div className="solicitation-summary" aria-label="Resumo das solicitações">
+      <span><strong>{counts.pending}</strong> Pendentes</span>
+      <span><strong>{counts.in_progress}</strong> Em andamento</span>
+      <span className={counts.overdue ? "has-overdue" : ""}><strong>{counts.overdue}</strong> Atrasadas</span>
+    </div>
+
     <div className="solicitations-toolbar">
-      <div className="solicitation-filters" role="tablist" aria-label="Filtrar solicitações">
-        {statusFilters.map(([key, label]) => <button key={key} role="tab" aria-selected={filter === key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}
+      <div className="solicitation-filters" role="group" aria-label="Filtrar solicitações">
+        {statusFilters.map(([key, label]) => <button key={key} type="button" aria-pressed={filter === key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}<span className="solicitation-filter-count">{counts[key]}</span></button>)}
       </div>
-      <label className="solicitation-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar descrição, sessão ou responsável" /></label>
+      <label className="solicitation-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar solicitação, sessão ou responsável" /></label>
     </div>
 
     <div className="solicitation-list" aria-busy={busy}>
       {visibleItems.map((item) => <article className="solicitation-card" key={item.id}>
         <button className="solicitation-card-main" onClick={() => void openDetail(item)}>
-          <span className={`solicitation-status ${item.atrasada ? "overdue" : item.status}`}>{statusText(item)}</span>
-          <strong>{item.descricao}</strong>
+          <span className={`solicitation-status ${item.status}`}>{statusLabels[item.status]}</span>
+          <strong className="solicitation-card-title">{item.descricao}</strong>
           <span className="solicitation-card-meta">
-            {item.sessao_codigo && <span>{item.sessao_codigo}</span>}
-            <span>Responsável: {item.responsavel_nome}</span>
-            <span>Solicitada em {formatSolicitationDate(item.solicitada_em)}</span>
-            <span className={item.atrasada ? "solicitation-overdue-text" : ""}>Prazo: {formatSolicitationDeadline(item.prazo_em, item.atrasada)}</span>
+            <span className="solicitation-assignee"><span className="solicitation-avatar" aria-hidden="true">{item.responsavel_nome.trim().charAt(0).toLocaleUpperCase("pt-BR") || "?"}</span><span>{item.responsavel_nome}</span></span>
+            {item.sessao_codigo && <span className="solicitation-session-chip">{item.sessao_codigo}</span>}
+            <span className="solicitation-requested-date">Solicitada em {formatSolicitationDate(item.solicitada_em)}</span>
           </span>
+          <span className={`solicitation-deadline ${deadlineTone(item)}`}><Clock3 size={13} /><span className="solicitation-deadline-label">Prazo</span><strong>{formatSolicitationDeadline(item.prazo_em, item.atrasada)}</strong></span>
         </button>
-        <button className="solicitation-open" aria-label={`Abrir solicitação: ${item.descricao}`} onClick={() => void openDetail(item)}>›</button>
+        <button className="solicitation-open" aria-label={`Ver detalhes: ${item.descricao}`} onClick={() => void openDetail(item)}>Ver detalhes <ArrowLeft size={14} /></button>
       </article>)}
-      {!visibleItems.length && <div className="solicitation-empty"><ClipboardList size={25} /><strong>Nenhuma solicitação nesta lista</strong><span>{search ? "Tente outro termo de busca." : "As solicitações aparecerão aqui."}</span></div>}
+      {!visibleItems.length && <div className="solicitation-empty"><ClipboardList size={25} />
+        <strong>{search ? "Nenhuma solicitação encontrada" : items.length === 0 && isCoordinator ? "Nenhuma solicitação criada" : `Nenhuma solicitação ${emptyFilterLabel}`}</strong>
+        <span>{search ? "Tente outro termo ou limpe a busca." : items.length === 0 && isCoordinator ? "Crie uma solicitação para organizar uma tarefa da equipe." : "Você está em dia com as tarefas desta lista."}</span>
+        {search && <button className="secondary" onClick={() => setSearch("")}>Limpar busca</button>}
+        {!search && items.length === 0 && isCoordinator && <button className="primary" onClick={() => { setForm(emptyForm); setCreateOpen(true); }}><Plus size={15} /> Nova solicitação</button>}
+      </div>}
     </div>
 
     {createOpen && <div className="modal-backdrop solicitation-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
@@ -270,19 +290,21 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }
 
     {selected && <div className="modal-backdrop solicitation-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { setSelected(null); setEditing(false); } }}>
       <section className="modal solicitation-modal" role="dialog" aria-modal="true" aria-labelledby="solicitation-detail-title">
-        <header className="solicitation-modal-heading"><div><span className={`solicitation-status ${selected.atrasada ? "overdue" : selected.status}`}>{statusText(selected)}</span><h2 id="solicitation-detail-title">{editing ? "Editar solicitação" : "Detalhes da solicitação"}</h2></div><button type="button" className="icon-button" onClick={() => { setSelected(null); setEditing(false); }} aria-label="Fechar"><X size={18} /></button></header>
+        <header className="solicitation-modal-heading"><div><span className={`solicitation-status ${selected.status}`}>{statusLabels[selected.status]}</span><h2 id="solicitation-detail-title">{editing ? "Editar solicitação" : "Detalhes da solicitação"}</h2></div><button type="button" className="icon-button" onClick={() => { setSelected(null); setEditing(false); }} aria-label="Fechar"><X size={18} /></button></header>
         {editing ? <form onSubmit={(event) => void saveEdit(event)}>
           <SolicitationFields form={form} assignees={assignees} sessionOptions={sessionOptions} onChange={setForm} onSessionQuery={setSessionQuery} />
           <footer><button type="button" className="secondary" onClick={() => setEditing(false)} disabled={busy}>Cancelar</button><button className="primary" type="submit" disabled={busy}><Check size={16} /> Salvar alterações</button></footer>
         </form> : <>
-          <div className="solicitation-detail-description"><h3>{selected.descricao}</h3>{selected.observacao && <p>{selected.observacao}</p>}</div>
+          <div className="solicitation-detail-description"><h3>{selected.descricao}</h3>{selected.observacao && <p><strong>Observação</strong>{selected.observacao}</p>}</div>
           <dl className="solicitation-detail-grid">
             <div><dt>Responsável</dt><dd>{selected.responsavel_nome} · {selected.responsavel_usuario}</dd></div>
             <div><dt>Criado por</dt><dd>{selected.criado_por_nome}</dd></div>
             <div><dt>Solicitada em</dt><dd>{formatSolicitationDate(selected.solicitada_em)}</dd></div>
             <div><dt>Prazo</dt><dd className={selected.atrasada ? "solicitation-overdue-text" : ""}>{formatSolicitationDeadline(selected.prazo_em, selected.atrasada)}</dd></div>
             <div><dt>Sessão</dt><dd>{selected.sessao_codigo ? <button className="solicitation-session-link" onClick={() => { setSelected(null); onOpenOrder(selected.sessao_codigo!); }}>{selected.sessao_codigo}</button> : "—"}</dd></div>
-            <div><dt>Concluída em</dt><dd>{formatSolicitationDate(selected.concluido_em)}</dd></div>
+            {selected.iniciado_em && <div><dt>Iniciada em</dt><dd>{formatSolicitationDate(selected.iniciado_em)}</dd></div>}
+            {selected.concluido_em && <div><dt>Concluída em</dt><dd>{formatSolicitationDate(selected.concluido_em)}</dd></div>}
+            {selected.cancelado_em && <div><dt>Cancelada em</dt><dd>{formatSolicitationDate(selected.cancelado_em)}</dd></div>}
           </dl>
           <div className="solicitation-detail-actions">
             {isCoordinator && <button className="secondary" onClick={beginEdit} disabled={busy}><Pencil size={15} /> Editar</button>}

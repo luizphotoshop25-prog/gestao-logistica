@@ -39,6 +39,21 @@ database.initialize = (electronApp) => {
   initializeDatabase(electronApp);
   const fixture = database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M99999", clienteNome: "Cliente Teste Visual", clienteEmail: "teste-visual@example.invalid", clienteTelefone: "00000000000", clienteCidade: "Curitiba - TESTE", fotosQuantidade: 25, observacoes: "Fixture sintético da captura visual.", editor: "Editor Teste", selecaoFinalizadaEm: null, tratamentoConcluido: false }] });
   if (!fixture.ok || fixture.imported !== 1) throw new Error(`Não foi possível preparar o fixture visual: ${fixture.message || "resultado inesperado"}.`);
+  const coordinator = database.createUser({ nome: "Coordenação Teste", usuario: "coordenacao-visual", role: "coordinator", senhaHash: "fixture-sintetico" });
+  const employee = database.createUser({ nome: "Carlos Teste", usuario: "carlos-visual", role: "employee", senhaHash: "fixture-sintetico" });
+  if (!coordinator.ok || !employee.ok) throw new Error("Não foi possível preparar usuários sintéticos para a captura de Solicitações.");
+  const now = Date.now();
+  const createRequest = (descricao, prazo, sessao = "M99999") => database.createSolicitation({ descricao, observacao: "Fixture visual sintética para validar a hierarquia dos detalhes.", sessao_codigo: sessao, responsavel_usuario_id: employee.user.id, criado_por_usuario_id: coordinator.user.id, criado_por_nome: coordinator.user.nome, prazo_em: prazo });
+  for (const [descricao, prazo] of [
+    ["Revisar seleção e separar as imagens prioritárias", new Date(now - 2 * 86400000).toISOString()],
+    ["Confirmar arquivos recebidos do laboratório", new Date(now + 3 * 3600000).toISOString()],
+    ["Preparar conferência da próxima remessa", new Date(now + 30 * 3600000).toISOString()],
+  ]) {
+    const result = createRequest(descricao, prazo);
+    if (!result.ok) throw new Error(`Não foi possível preparar solicitação visual: ${result.message || "resultado inesperado"}.`);
+  }
+  const noDeadline = createRequest("Organizar pendências sem prazo definido", null, "");
+  if (!noDeadline.ok) throw new Error(`Não foi possível preparar solicitação sem prazo: ${noDeadline.message || "resultado inesperado"}.`);
 };
 
 
@@ -72,7 +87,7 @@ app.setPath("userData", profilePath);
 
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
-const allowedChannels = new Set(["app:status", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status"]);
+const allowedChannels = new Set(["app:status", "updater:get-state", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create"]);
 if (httpTransport) {
   allowedChannels.clear();
   allowedChannels.add("auth-session:read");
@@ -140,6 +155,61 @@ app.whenReady().then(() => {
           await capture(window, tabOutputPath);
           generatedPaths.push(tabOutputPath);
         }
+
+        await window.webContents.executeJavaScript("document.querySelector('.detail-modal button[aria-label=\"Fechar ficha\"]')?.click()");
+        await delay(220);
+        await window.webContents.executeJavaScript("[...document.querySelectorAll('button.queue.utility')].find((button) => button.innerText.includes('Solicitações'))?.click()");
+        await waitForSelector(window, ".solicitations-page");
+        await waitForSelector(window, ".solicitation-card");
+        const filterAndSearchPassed = await window.webContents.executeJavaScript(`(() => {
+          const buttons = [...document.querySelectorAll('.solicitation-filters button')];
+          const pending = buttons.find((button) => button.innerText.includes('Pendentes'));
+          pending?.click();
+          const pendingCount = document.querySelectorAll('.solicitation-card').length;
+          const input = document.querySelector('.solicitation-search input');
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(input, 'próxima remessa'); input.dispatchEvent(new Event('input', { bubbles: true }));
+          const searchMatches = [...document.querySelectorAll('.solicitation-card')].length === 1 && document.querySelector('.solicitation-card-title')?.innerText.includes('próxima remessa');
+          setter.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true }));
+          buttons.find((button) => button.innerText.includes('Abertas'))?.click();
+          return pendingCount === 4 && searchMatches;
+        })()`);
+        if (!filterAndSearchPassed) throw new Error("Filtros ou busca de Solicitações não corresponderam aos fixtures visuais.");
+        const solicitationListPath = outputPath.replace(/\.png$/i, "-solicitacoes.png");
+        await capture(window, solicitationListPath);
+        generatedPaths.push(solicitationListPath);
+        await window.webContents.executeJavaScript("document.querySelector('.solicitation-card-main')?.click()");
+        await waitForSelector(window, ".solicitation-detail-grid");
+        const solicitationDetailPath = outputPath.replace(/\.png$/i, "-solicitacao-detalhe.png");
+        await capture(window, solicitationDetailPath);
+        generatedPaths.push(solicitationDetailPath);
+        await window.webContents.executeJavaScript("document.querySelector('.solicitation-modal .icon-button')?.click()");
+        await delay(180);
+        await window.webContents.executeJavaScript("document.querySelector('.solicitations-new')?.click()");
+        await waitForSelector(window, "#solicitation-create-title");
+        const solicitationCreatePath = outputPath.replace(/\.png$/i, "-solicitacao-nova.png");
+        await capture(window, solicitationCreatePath);
+        generatedPaths.push(solicitationCreatePath);
+        await window.webContents.executeJavaScript(`(async () => {
+          const form = document.querySelector('.solicitation-modal');
+          const areas = form.querySelectorAll('textarea');
+          const set = (element, value, prototype) => { Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); element.dispatchEvent(new Event('change', { bubbles: true })); };
+          set(areas[0], 'Validar criação pela interface de Solicitações', HTMLTextAreaElement.prototype);
+          set(form.querySelector('select'), form.querySelector('select').options[1].value, HTMLSelectElement.prototype);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          form.requestSubmit();
+          return { assignees: form.querySelector('select').options.length, selected: form.querySelector('select').value };
+        })()`);
+        const createdByUi = await (async () => {
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            const found = database.listSolicitations({ role: "coordinator" }).find((item) => item.descricao === "Validar criação pela interface de Solicitações");
+            if (found) return found.responsavel_usuario === "carlos-visual";
+            await delay(80);
+          }
+          return false;
+        })();
+        if (!createdByUi) throw new Error(`A criação pela interface não persistiu a solicitação atribuída ao usuário sintético. Linhas atuais: ${JSON.stringify(database.listSolicitations({ role: "coordinator" }).map((item) => item.descricao))}`);
 
         process.stdout.write(`userData=${resolvedProfilePath}\n${generatedPaths.join("\n")}\n`);
         database.close();

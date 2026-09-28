@@ -30,7 +30,25 @@ export function formatSolicitationDeadline(value: string | null, overdue = false
 }
 
 export function isSolicitationDueToday(value: string | null, now = new Date()) {
-  return Boolean(value && saoPauloDate(new Date(value)) === saoPauloDate(now));
+  if (!value) return false;
+  const deadline = new Date(value);
+  return Number.isFinite(deadline.getTime()) && saoPauloDate(deadline) === saoPauloDate(now);
+}
+
+export function sortSolicitationsByUrgency<T extends { status: string; atrasada: boolean; prazo_em: string | null; created_at: string }>(items: T[], now = new Date()) {
+  const priority = (item: T) => {
+    if (item.status === "completed" || item.status === "cancelled") return 4;
+    if (item.atrasada) return 0;
+    if (isSolicitationDueToday(item.prazo_em, now)) return 1;
+    if (!item.prazo_em || !Number.isFinite(Date.parse(item.prazo_em))) return 3;
+    return 2;
+  };
+  return [...items].sort((a, b) => {
+    const priorityDifference = priority(a) - priority(b);
+    if (priorityDifference) return priorityDifference;
+    if (priority(a) === 2) return Date.parse(a.prazo_em!) - Date.parse(b.prazo_em!);
+    return Date.parse(b.created_at) - Date.parse(a.created_at);
+  });
 }
 
 export function toLocalDateTimeInput(value: string | null) {
