@@ -90,6 +90,7 @@ BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
 const allowedChannels = new Set(["app:status", "updater:get-state", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create"]);
 if (httpTransport) {
   allowedChannels.clear();
+  allowedChannels.add("updater:get-state");
   allowedChannels.add("auth-session:read");
   allowedChannels.add("auth-session:write");
   allowedChannels.add("auth-session:clear");
@@ -130,6 +131,7 @@ app.whenReady().then(() => {
       try {
         if (httpTransport) {
           await waitForSelector(window, ".auth-card");
+          await capture(window, outputPath.replace(/\.png$/i, "-login.png"));
           await window.webContents.executeJavaScript(`(() => { const inputs=document.querySelectorAll('.auth-card input'); const set=(input,value)=>{ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,value); input.dispatchEvent(new Event('input',{bubbles:true})); }; set(inputs[0],${JSON.stringify(captureUser)}); set(inputs[1],${JSON.stringify(capturePassword)}); document.querySelector('.auth-card').requestSubmit(); })()`);
         }
         await waitForSelector(window, ".app-navigation");
@@ -138,6 +140,19 @@ app.whenReady().then(() => {
         const visible = await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(expectedSession)}) && document.body.innerText.includes(${JSON.stringify(expectedClientName)}) && typeof window.gestaoAPI.getOrder === "function" && (!${httpTransport} || window.gestaoConfig.dataTransport === "http")`);
         if (!visible) throw new Error("Fixture ou preload ausente.");
         await capture(window, outputPath);
+        if (httpTransport) {
+          await window.webContents.executeJavaScript("document.querySelector('.session-link').click()");
+          await waitForSelector(window, ".order-preview .ui-button-primary");
+          const remotePreviewPath = outputPath.replace(/\.png$/i, "-preview.png");
+          await capture(window, remotePreviewPath);
+          await window.webContents.executeJavaScript("document.querySelector('.order-preview .ui-button-primary').click()");
+          await waitForSelector(window, ".detail-modal");
+          const remoteDetailPath = outputPath.replace(/\.png$/i, "-pedido.png");
+          await capture(window, remoteDetailPath);
+          process.stdout.write(`userData=${resolvedProfilePath}\n${outputPath}\n${remotePreviewPath}\n${remoteDetailPath}\n`);
+          app.exit(0);
+          return;
+        }
         await window.webContents.executeJavaScript("document.querySelector('.integration-trigger')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))");
         await waitForSelector(window, ".app-menu-content");
         await capture(window, menuOutputPath);
@@ -215,6 +230,14 @@ app.whenReady().then(() => {
           return false;
         })();
         if (!createdByUi) throw new Error(`A criação pela interface não persistiu a solicitação atribuída ao usuário sintético. Linhas atuais: ${JSON.stringify(database.listSolicitations({ role: "coordinator" }).map((item) => item.descricao))}`);
+
+        await window.webContents.executeJavaScript("document.querySelector('.solicitation-modal .icon-button')?.click();document.querySelector('.shell-secondary button')?.click()");
+        await waitForSelector(window, ".clients-table tbody tr");
+        const clientsVisible = await window.webContents.executeJavaScript("document.querySelector('.clients-table')?.innerText.includes('Cliente Teste Visual') && document.querySelector('.shell-secondary [aria-current=page]')?.textContent.includes('Clientes')");
+        if (!clientsVisible) throw new Error("A consulta de clientes não exibiu o cadastro sintético na nova página.");
+        const clientsPath = outputPath.replace(/\.png$/i, "-clientes.png");
+        await capture(window, clientsPath);
+        generatedPaths.push(clientsPath);
 
         process.stdout.write(`userData=${resolvedProfilePath}\n${generatedPaths.join("\n")}\n`);
         database.close();

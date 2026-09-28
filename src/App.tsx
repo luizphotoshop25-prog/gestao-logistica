@@ -117,12 +117,14 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [detailTab, setDetailTab] = useState<"summary" | "operation" | "history">("summary");
   const [form, setForm] = useState<Record<string, string>>({});
   const [savedForm, setSavedForm] = useState<Record<string, string>>({});
-  const [showClients, setShowClients] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
   const [clients, setClients] = useState<ClientRow[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsError, setClientsError] = useState("");
+  const [clientsRefresh, setClientsRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "solicitations">("central");
+  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "solicitations" | "clients">("central");
   const [lastSiwinSync, setLastSiwinSync] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -214,21 +216,29 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       if (commandOpen) return setCommandOpen(false);
       if (confirmation) return setConfirmation(null);
       if (preview) return setPreview(null);
-      if (showClients) return setShowClients(false);
       if (detail) closeOrder();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [commandOpen, confirmation, preview, showClients, detail, formDirty]);
+  }, [commandOpen, confirmation, preview, detail, formDirty]);
 
   useEffect(() => {
-    if (!showClients) return;
+    if (workspacePage !== "clients") return;
+    let active = true;
+    setClientsLoading(true);
+    setClientsError("");
     const timer = window.setTimeout(async () => {
-      const result = await dataService.listClients({ search: clientSearch, limit: 200 });
-      if (result.ok) setClients(result.rows);
+      try {
+        const result = await dataService.listClients({ search: clientSearch, limit: 200 });
+        if (!active) return;
+        if (result.ok) setClients(result.rows);
+        else setClientsError("Não foi possível carregar os clientes.");
+      } catch (error) {
+        if (active) setClientsError(error instanceof Error ? error.message : "Não foi possível carregar os clientes.");
+      } finally { if (active) setClientsLoading(false); }
     }, 180);
-    return () => window.clearTimeout(timer);
-  }, [showClients, clientSearch]);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [workspacePage, clientSearch, clientsRefresh]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void reload(), 180);
@@ -533,7 +543,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     setDetailTab("operation");
     window.requestAnimationFrame(() => document.getElementById(`detail-${suggestedSection}`)?.scrollIntoView({ block: "start" }));
   };
-  const navigateWorkspace = (page: "central" | "orders" | "solicitations") => {
+  const navigateWorkspace = (page: "central" | "orders" | "solicitations" | "clients") => {
     if (detail && formDirty) {
       setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e continuar", tone: "warning", onConfirm: () => { setDetail(null); setWorkspacePage(page); } });
       return;
@@ -547,8 +557,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       <nav className="app-navigation" aria-label="Navegação principal">
         <div className="shell-brand"><Layers3 size={25} /><div><strong>Gestão Logística</strong><small>Estúdio Manoel Guimarães</small></div></div>
         <span className="section-kicker">OPERAÇÃO</span>
-        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
-        {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button onClick={() => { if (detail && formDirty) setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e consultar clientes", tone: "warning", onConfirm: () => { setDetail(null); setShowClients(true); } }); else { setDetail(null); setShowClients(true); } }}><Users size={18} />Clientes</button></div>}
+        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
+        {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button className={workspacePage === "clients" ? "shell-active" : undefined} aria-current={workspacePage === "clients" ? "page" : undefined} onClick={() => navigateWorkspace("clients")}><Users size={18} />Clientes</button></div>}
         <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
       </nav>
       <header className="shell-header">
@@ -561,11 +571,22 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
         {notice && <div className="notice" role="status">{notice}<button aria-label="Fechar aviso" onClick={() => setNotice("")}><X size={15} /></button></div>}
         {workspacePage === "central" ? <Central queue={centralQueue} onQueue={setCentralQueue} currentUser={currentUser} onOrder={(id) => void openOrder(id)} onOrders={(value) => { setSearch(""); setFilter(value); setWorkspacePage("orders"); }} onSolicitations={(item) => { setCentralTask(item || null); setWorkspacePage("solicitations"); }} /> : workspacePage === "solicitations" ? <SolicitationsPage
           currentUser={currentUser}
-          onBack={() => setWorkspacePage("orders")}
           onNotice={setNotice}
           onOpenOrder={(session) => void openSolicitationSession(session)}
           initialSelection={centralTask}
-        /> : <>
+        /> : workspacePage === "clients" ? <section className="clients-screen">
+          <div className="central-heading"><div><span className="section-kicker">CONSULTAS</span><h1>Clientes</h1><p>Cadastros sincronizados com sessões locais.</p></div></div>
+          <div className="clients-panel">
+            <div className="clients-toolbar"><label className="orders-search"><Search size={17} /><input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Nome, telefone, e-mail ou código CAD" aria-label="Buscar clientes" /></label><span>Até 200 resultados por consulta</span></div>
+            {clientsError ? <ViewState kind="error" title={clientsError} onRetry={() => setClientsRefresh((value) => value + 1)} /> : <div className="clients-table-wrap">
+              <table className="clients-table"><caption className="sr-only">Clientes sincronizados</caption><thead><tr><th scope="col">CAD</th><th scope="col">Cliente</th><th scope="col">Contato</th><th scope="col">Cidade</th><th scope="col">Pedidos locais</th></tr></thead><tbody>
+                {!clientsLoading && clients.map((client) => <tr key={client.id}><td>{client.siwin_cad || "—"}</td><td><strong>{client.nome || "Sem nome"}</strong><small>{client.email || "Sem e-mail"}</small></td><td>{client.celular || client.telefone || "—"}</td><td>{[client.cidade, client.uf].filter(Boolean).join("/") || "—"}</td><td>{client.pedidos_quantidade}</td></tr>)}
+              </tbody></table>
+              {clientsLoading && <div className="clients-state"><span className="ui-spinner" /><strong>Carregando clientes…</strong></div>}
+              {!clientsLoading && !clients.length && <ViewState kind="empty" title={clientSearch ? "Nenhum cliente encontrado" : "Nenhum cliente sincronizado"} description={clientSearch ? "Revise o termo da busca." : "Os cadastros aparecem após a sincronização local."} />}
+            </div>}
+          </div>
+        </section> : <>
         <section className="orders-screen">
           <div className="central-heading"><div><span className="section-kicker">OPERAÇÃO</span><h1>Pedidos</h1><p>Sessões, próximas ações e prazos da equipe.</p></div><button className="ui-button" onClick={() => void reload()} disabled={initialLoading}>Atualizar</button></div>
           <section className="orders-panel">
@@ -635,30 +656,6 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               ))}
             </div>
             <footer><button className="secondary" onClick={() => setPreview(null)}>Cancelar</button><button className="primary" onClick={confirmImport} disabled={busy}><Check size={18} /> Importar somente as {preview.eligible} seguras</button></footer>
-          </section>
-        </div>
-      )}
-
-      {showClients && (
-        <div className="modal-backdrop">
-          <section className="modal clients-modal" role="dialog" aria-modal="true" aria-label="Consulta de clientes sincronizados">
-            <div className="modal-head">
-              <div><span className="eyebrow">CADASTRO SINCRONIZADO</span><h2>Clientes com sessão M</h2></div>
-              <button className="icon-button" aria-label="Fechar consulta de clientes" onClick={() => setShowClients(false)}><X /></button>
-            </div>
-            <label className="search wide"><Search size={17} /><input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Nome, telefone, e-mail ou código CAD" autoFocus /></label>
-            <p className="result-note">Exibindo até 200 registros. Digite para localizar um cliente.</p>
-            <div className="client-table-wrap">
-              <table>
-                <thead><tr><th>CAD</th><th>Cliente</th><th>Contato</th><th>Cidade</th><th>Pedidos locais</th></tr></thead>
-                <tbody>{clients.map((client) => (
-                  <tr key={client.id}>
-                    <td>{client.siwin_cad || "—"}</td><td><strong>{client.nome || "Sem nome"}</strong><small>{client.email}</small></td>
-                    <td>{client.celular || client.telefone || "—"}</td><td>{[client.cidade, client.uf].filter(Boolean).join("/") || "—"}</td><td>{client.pedidos_quantidade}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
           </section>
         </div>
       )}
@@ -818,7 +815,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
         onClose={() => { setCommandOpen(false); setCommandQuery(""); }}
         onOpenOrder={(order) => void openFromCommand(order)}
         onFilter={applyCommandFilter}
-        onClients={window.gestaoConfig.dataTransport === "http" ? undefined : () => { setCommandOpen(false); setCommandQuery(""); setShowClients(true); }}
+        onClients={window.gestaoConfig.dataTransport === "http" ? undefined : () => { setCommandOpen(false); setCommandQuery(""); navigateWorkspace("clients"); }}
       />
 
       {confirmation && (

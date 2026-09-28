@@ -31,7 +31,7 @@ if (!process.versions.electron) {
  if(role==='employee')assert.equal(await evaluate('document.querySelector(".central-columns").firstElementChild.classList.contains("central-tasks")'),true);
  await capture(role+'-'+width+'x'+height+(scale>1?'-zoom125':''));
  await evaluate('document.querySelector(".central-task").click()');await wait('.solicitation-detail-grid');
- await evaluate('document.querySelector(".solicitation-modal .icon-button").click();document.querySelectorAll(".app-navigation>button")[0].click()');await wait('.central-order');
+ await evaluate('document.querySelector(".solicitation-detail-pane .icon-button").click();document.querySelectorAll(".app-navigation>button")[0].click()');await wait('.central-order');
  await evaluate('document.querySelector(".central-signal").click()');await wait('.orders-panel');
  assert.equal(await evaluate('document.querySelector(".app-navigation [aria-current]").textContent'),'Pedidos');
  await evaluate('document.querySelectorAll(".app-navigation>button")[2].click()');await wait('.solicitations-page');

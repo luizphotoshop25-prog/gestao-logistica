@@ -6,7 +6,6 @@ import { formatSolicitationDate, formatSolicitationDeadline, isSolicitationDueTo
 type Props = {
   initialSelection?: Solicitation | null;
   currentUser: AuthUser;
-  onBack: () => void;
   onNotice: (message: string) => void;
   onOpenOrder: (session: string) => void;
 };
@@ -87,7 +86,7 @@ export function SolicitationIndicator({ onOpen }: { onOpen: () => void }) {
   </button>;
 }
 
-export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, initialSelection }: Props) {
+export function SolicitationsPage({ currentUser, onNotice, onOpenOrder, initialSelection }: Props) {
   const isCoordinator = currentUser.role === "coordinator";
   const [items, setItems] = useState<Solicitation[]>([]);
   const [assignees, setAssignees] = useState<ActiveUser[]>([]);
