@@ -38,8 +38,17 @@ if (!process.versions.electron) {
  assert.equal(await evaluate('document.activeElement.classList.contains("session-link")'),true,'Focus not restored');
  await evaluate('document.querySelector(".orders-table .session-link").focus();document.querySelector(".orders-table .session-link").click()');await wait('.preview-facts');
  await evaluate('document.querySelector(".order-preview .ui-button-primary").click()');await wait('.detail-modal');
+ assert.equal(await evaluate('document.querySelectorAll(".detail-nav button").length'),3);
+ await capture('detail-summary-'+width+'x'+height);
+ await evaluate('document.querySelectorAll(".detail-nav button")[1].click()');
+ assert.equal(await evaluate('document.querySelector(".detail-modal").dataset.tab'),'operation');
+ assert.equal(await evaluate('!!document.querySelector(".detail-modal .pane-shipping")'),true);
+ await capture('detail-operation-'+width+'x'+height);
+ await evaluate('document.querySelectorAll(".detail-nav button")[2].click()');
+ assert.equal(await evaluate('document.querySelector(".detail-modal").dataset.tab'),'history');
  await evaluate('[...document.querySelectorAll(".detail-modal button")].find(button=>button.getAttribute("aria-label")==="Fechar ficha").click()');await pause();
  assert.equal(await evaluate('document.querySelector(".orders-table .session-link").textContent'),sessionBefore);
+ assert.equal(await evaluate('document.activeElement.classList.contains("session-link")'),true,'Full detail did not restore focus');
  await evaluate('Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(document.querySelector(".orders-search input"),"M999");document.querySelector(".orders-search input").dispatchEvent(new Event("input",{bubbles:true}))');await new Promise(r=>setTimeout(r,400));
  assert.equal(await evaluate('window.lastOrderOptions.filter'),'needs_me','Search silently changes scope');
  await evaluate('const select=document.querySelectorAll(".orders-control select")[0];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"all");select.dispatchEvent(new Event("change",{bubbles:true}))');await new Promise(r=>setTimeout(r,400));
@@ -50,6 +59,21 @@ if (!process.versions.electron) {
  assert.equal(await evaluate('document.body.innerText.includes("Selecionar vários")'),false,'Unsupported bulk shown remotely');
  await evaluate('document.querySelector(".orders-table .session-link").focus();document.querySelector(".orders-table .session-link").click()');await wait('.preview-facts');
  await capture('preview-http');
+ await evaluate('document.querySelector(".order-preview .ui-button-primary").click()');await wait('.detail-modal');
+ await evaluate('document.querySelectorAll(".detail-nav button")[1].click()');
+ assert.equal(await evaluate('document.querySelectorAll(".detail-modal .attachment-button").length'),0,'Local-only action shown over HTTP');
+ await evaluate('document.querySelectorAll(".detail-nav button")[0].click()');
+ await evaluate('[...document.querySelectorAll(".detail-modal button")].find(button=>button.getAttribute("aria-label")==="Fechar ficha")?.click()');
+ await win.loadURL(process.env.CENTRAL_ORIGIN+'/tests/central-fixture.html?count=55');await wait('.central-order');
+ await evaluate('document.querySelectorAll(".app-navigation>button")[1].click()');await wait('.orders-table .session-link');
+ await evaluate('document.querySelector(".orders-table .session-link").focus();document.querySelector(".orders-table .session-link").click()');await wait('.preview-facts');
+ await evaluate('document.querySelector(".order-preview .ui-button-primary").click()');await wait('.detail-modal');
+ await evaluate('const field=document.querySelector(".detail-modal textarea:not([readonly])");Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(field,"Alteração sintética sem salvar");field.dispatchEvent(new Event("input",{bubbles:true}))');await pause();
+ assert.equal(await evaluate('document.querySelector(".detail-modal .save-state").textContent.includes("não salvas")'),true,'Dirty state not detected');
+ await evaluate('document.querySelectorAll(".app-navigation>button")[0].click()');await wait('.confirmation-modal');
+ assert.equal(await evaluate('!!document.querySelector(".detail-modal")'),true);
+ await evaluate('document.querySelector(".confirmation-modal .secondary").click()');await pause();
+ assert.equal(await evaluate('!!document.querySelector(".detail-modal")'),true,'Cancel lost unsaved form');
  for(const state of ['empty','error','loading','preview-error']){
  await win.loadURL(process.env.CENTRAL_ORIGIN+'/tests/central-fixture.html?state='+state);await wait('.app-navigation');
  await evaluate('document.querySelectorAll(".app-navigation>button")[1].click()');
@@ -58,7 +82,7 @@ if (!process.versions.electron) {
  else await wait('.orders-screen .ui-state-'+state);
  await capture('orders-'+state);
  }
- assert.deepEqual(errors,[]);console.log('Pedidos: 9 capturas; preview, paginação, foco, ficha, escopo da busca e estados aprovados. '+output);
+ assert.deepEqual(errors,[]);console.log('Pedidos e ficha: 13 capturas; preview, paginação, foco, ficha, escopo da busca e estados aprovados. '+output);
  app.exit(0);
  }catch(error){console.error(error);app.exit(1);}
  });

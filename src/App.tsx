@@ -114,7 +114,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [bulkMode, setBulkMode] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [detail, setDetail] = useState<OrderDetailResult | null>(null);
-  const [detailTab, setDetailTab] = useState<"summary" | "selection" | "production" | "shipping" | "history">("summary");
+  const [detailTab, setDetailTab] = useState<"summary" | "operation" | "history">("summary");
   const [form, setForm] = useState<Record<string, string>>({});
   const [savedForm, setSavedForm] = useState<Record<string, string>>({});
   const [showClients, setShowClients] = useState(false);
@@ -130,9 +130,18 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [commandQuery, setCommandQuery] = useState("");
   const [commandResults, setCommandResults] = useState<Order[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const detailReturnFocusRef = useRef<HTMLElement | null>(null);
   const listRequestRef = useRef(0);
   const formDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(savedForm), [form, savedForm]);
   const pageSize = 50;
+  const dismissOrder = () => {
+    const previousFocus = detailReturnFocusRef.current;
+    setDetail(null);
+    window.requestAnimationFrame(() => { if (previousFocus?.isConnected) previousFocus.focus(); });
+  };
+  useEffect(() => {
+    if (detail) window.requestAnimationFrame(() => document.querySelector<HTMLElement>(".detail-head button[aria-label='Fechar ficha']")?.focus());
+  }, [detail?.order.id]);
 
   const closeOrder = () => {
     if (formDirty) {
@@ -142,11 +151,11 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
         note: "Ao fechar, essas alterações serão perdidas.",
         confirmLabel: "Descartar e fechar",
         tone: "warning",
-        onConfirm: () => setDetail(null),
+        onConfirm: dismissOrder,
       });
       return;
     }
-    setDetail(null);
+    dismissOrder();
   };
 
   const reload = useCallback(async () => {
@@ -357,6 +366,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   };
 
   const openOrder = async (orderId: string) => {
+    detailReturnFocusRef.current = document.querySelector<HTMLElement>(".orders-table .order-selected .session-link")
+      || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setBusy(true);
     let result: OrderDetailResult;
     try { result = await dataService.getOrder(orderId); }
@@ -518,22 +529,32 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     entregue: -1,
   };
   const currentWorkflowIndex = detail ? (workflowStageIndex[detail.order.etapa] ?? workflowSteps.findIndex((step) => !step.done)) : -1;
-  const suggestedDetailTab = currentWorkflowIndex <= 1 ? "selection" : currentWorkflowIndex <= 3 ? "production" : "shipping";
-  const suggestedDetailLabel = suggestedDetailTab === "selection" ? "Abrir Seleção" : suggestedDetailTab === "production" ? "Abrir Produção" : "Abrir Envio";
-  const suggestedActionText = suggestedDetailTab === "selection" ? "Conferir a seleção recebida" : suggestedDetailTab === "production" ? "Enviar fotos à Digital Fotos" : "Preparar etiqueta e envio";
+  const suggestedSection = currentWorkflowIndex <= 1 ? "selection" : currentWorkflowIndex <= 3 ? "production" : "shipping";
+  const jumpToOperation = () => {
+    setDetailTab("operation");
+    window.requestAnimationFrame(() => document.getElementById(`detail-${suggestedSection}`)?.scrollIntoView({ block: "start" }));
+  };
+  const navigateWorkspace = (page: "central" | "orders" | "solicitations") => {
+    if (detail && formDirty) {
+      setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e continuar", tone: "warning", onConfirm: () => { setDetail(null); setWorkspacePage(page); } });
+      return;
+    }
+    setDetail(null);
+    setWorkspacePage(page);
+  };
 
   return (
     <div className="app-shell" aria-busy={busy}>
       <nav className="app-navigation" aria-label="Navegação principal">
         <div className="shell-brand"><Layers3 size={25} /><div><strong>Gestão Logística</strong><small>Estúdio Manoel Guimarães</small></div></div>
         <span className="section-kicker">OPERAÇÃO</span>
-        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); setWorkspacePage(key); }}><Icon size={18} />{label}</button>)}
-        {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button onClick={() => setShowClients(true)}><Users size={18} />Clientes</button></div>}
+        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
+        {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button onClick={() => { if (detail && formDirty) setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e consultar clientes", tone: "warning", onConfirm: () => { setDetail(null); setShowClients(true); } }); else { setDetail(null); setShowClients(true); } }}><Users size={18} />Clientes</button></div>}
         <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
       </nav>
       <header className="shell-header">
         <Hint label="Buscar pedidos e acessar atalhos (Ctrl+K)"><button className="shell-search ui-button" onClick={() => setCommandOpen(true)}><Search size={16} />Buscar pedidos e atalhos <kbd>Ctrl K</kbd></button></Hint>
-        <div className="shell-account"><span className="shell-connection">{window.gestaoConfig.dataTransport === 'http' ? 'Acesso remoto' : 'Acesso local'}</span><div><strong>{currentUser.nome}</strong><small>{currentUser.role === 'employee' ? 'Funcionário' : 'Coordenador'}</small></div>{onLogout && <button className="ui-button" onClick={onLogout}>Sair</button>}</div>
+        <div className="shell-account"><span className="shell-connection">{window.gestaoConfig.dataTransport === 'http' ? 'Acesso remoto' : 'Acesso local'}</span><div><strong>{currentUser.nome}</strong><small>{currentUser.role === 'employee' ? 'Funcionário' : 'Coordenador'}</small></div>{onLogout && <button className="ui-button" onClick={() => { if (detail && formDirty) setConfirmation({ title: "Sair sem salvar?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e sair", tone: "warning", onConfirm: () => onLogout() }); else onLogout(); }}>Sair</button>}</div>
         {window.gestaoConfig.dataTransport !== 'http' && <IntegrationMenu busy={busy} lastSync={lastSiwinSync} onThunderbird={() => void syncThunderbird()} onSiwin={() => void syncSiwin()} onImport={() => void openImport()} />}
       </header>
 
@@ -644,11 +665,11 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       )}
 
       {detail && (
-        <div className="modal-backdrop detail-backdrop">
-          <section className="modal detail-modal" data-tab={detailTab} role="dialog" aria-modal="true" aria-label={`Ficha do pedido ${detail.order.sessao}`}>
+        <div className="detail-backdrop">
+          <section className="detail-modal" data-tab={detailTab} role="region" aria-label={`Ficha do pedido ${detail.order.sessao}`}>
             <div className="modal-head detail-head">
               <div className="detail-identity"><span className="session-badge">{detail.order.sessao}</span><div><span className="eyebrow">FICHA DO PEDIDO</span><h2>{detail.order.cliente_nome || "Cliente não identificado"}</h2><p>Informações logísticas, produção e entrega em um só lugar.</p></div></div>
-              <button className="icon-button" aria-label="Fechar ficha" onClick={closeOrder}><X /></button>
+              <button className="ui-button" aria-label="Fechar ficha" onClick={closeOrder}>← Voltar à lista</button>
             </div>
             <div className="detail-summary">
               <div className="summary-status"><span className={`stage stage-${detail.order.etapa}`}>{stageLabels[detail.order.etapa] || detail.order.etapa}</span></div>
@@ -670,16 +691,14 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               </div>
             </section>
             <nav className="detail-nav" aria-label="Seções do pedido">
-              <button className={detailTab === "summary" ? "active" : ""} onClick={() => setDetailTab("summary")}><strong>Resumo</strong><small>Pedido e produtos</small></button>
-              <button className={detailTab === "selection" ? "active" : ""} onClick={() => setDetailTab("selection")}><strong>Seleção</strong><small>Galeria e escolha</small></button>
-              <button className={detailTab === "production" ? "active" : ""} onClick={() => setDetailTab("production")}><strong>Produção</strong><small>Tratamento e impressão</small></button>
-              <button className={detailTab === "shipping" ? "active" : ""} onClick={() => setDetailTab("shipping")}><strong>Envio</strong><small>Etiqueta e rastreio</small></button>
-              <button className={detailTab === "history" ? "active" : ""} onClick={() => setDetailTab("history")}><strong>Histórico</strong><small>Anexos e eventos</small></button>
+              <button className={detailTab === "summary" ? "active" : ""} aria-current={detailTab === "summary" ? "page" : undefined} onClick={() => setDetailTab("summary")}><strong>Resumo</strong><small>Cliente e produtos</small></button>
+              <button className={detailTab === "operation" ? "active" : ""} aria-current={detailTab === "operation" ? "page" : undefined} onClick={() => setDetailTab("operation")}><strong>Operação</strong><small>Seleção, produção e envio</small></button>
+              <button className={detailTab === "history" ? "active" : ""} aria-current={detailTab === "history" ? "page" : undefined} onClick={() => setDetailTab("history")}><strong>Histórico</strong><small>Anexos e eventos</small></button>
             </nav>
 
             <section className="next-action-card detail-pane pane-summary" aria-label="Próxima ação recomendada">
-              <div><span className="section-kicker">PRÓXIMA AÇÃO</span><strong>{suggestedActionText}</strong><p>A etapa destacada acima orienta o próximo registro operacional.</p></div>
-              <button className="primary" onClick={() => setDetailTab(suggestedDetailTab)}>{suggestedDetailLabel}<ChevronRight size={16} /></button>
+              <div><span className="section-kicker">PRÓXIMA AÇÃO</span><strong>{detail.order.acao_recomendada || "Consultar próxima ação"}</strong><p>Etapa atual: {stageLabels[detail.order.etapa] || detail.order.etapa}. Confira os dados antes de registrar alterações.</p></div>
+              <button className="ui-button ui-button-primary" onClick={jumpToOperation}>Ir para operação<ChevronRight size={16} /></button>
             </section>
 
             <section className="purchased-section detail-pane pane-summary">
@@ -715,7 +734,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               </div> : <p className="no-products">Nenhuma observação registrada no SIWIN para este pedido.</p>}
             </section>
 
-            <section className="selection-email-section detail-pane pane-selection">
+            <section className="selection-email-section detail-pane pane-selection" id="detail-selection">
               <div className="section-title">
                 <div><h3>Seleções recebidas pelo Thunderbird</h3><p>E-mails da EPICS vinculados automaticamente a esta sessão.</p></div>
                 <strong>{detail.selectionEmails?.length || 0} e-mail(s)</strong>
@@ -727,11 +746,11 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                     <time>{new Date(email.recebido_em).toLocaleString("pt-BR")}</time>
                   </header>
                   <textarea readOnly rows={3} value={email.codigos.join(", ")} aria-label={`Códigos da seleção ${email.sessao}`} />
-                  <div className="selection-actions">
+                  {window.gestaoConfig.dataTransport !== "http" && <div className="selection-actions">
                     <button className="attachment-button" onClick={() => prepareSelection(email.id)} disabled={busy}><Send size={15} /> Preparar no GerenciadorFotos</button>
                     <button className={`attachment-button ${email.conferida_em ? "done" : ""}`} onClick={() => markSelection(email.id, "conferida_em")} disabled={busy}><Check size={15} /> {email.conferida_em ? "Seleção conferida" : "Marcar conferida"}</button>
                     <button className={`attachment-button ${email.fotos_separadas_em ? "done" : ""}`} onClick={() => markSelection(email.id, "fotos_separadas_em")} disabled={busy}><PackageCheck size={15} /> {email.fotos_separadas_em ? "Fotos separadas" : "Marcar fotos separadas"}</button>
-                  </div>
+                  </div>}
                 </article>)}
               </div> : <p className="no-products">Nenhum e-mail de seleção vinculado a este pedido.</p>}
             </section>
@@ -740,10 +759,10 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               <section className="form-section span-2 detail-pane pane-selection">
                 <h3>Galeria e envio ao cliente</h3>
                 <div className="field-grid three">
-                  <label className="span-2">URL da galeria<div className="input-action"><input value={form.galeria_url || ""} onChange={(event) => setForm({ ...form, galeria_url: event.target.value })} placeholder="https://..." />{form.galeria_url && <button onClick={() => dataService.openExternal(form.galeria_url)} title="Abrir link"><ExternalLink size={17} /></button>}</div></label>
+                  <label className="span-2">URL da galeria<div className="input-action"><input value={form.galeria_url || ""} onChange={(event) => setForm({ ...form, galeria_url: event.target.value })} placeholder="https://..." />{form.galeria_url && window.gestaoConfig.dataTransport !== "http" && <button onClick={() => dataService.openExternal(form.galeria_url)} title="Abrir link"><ExternalLink size={17} /></button>}</div></label>
                   <label>Galeria publicada em<input type="date" value={form.galeria_publicada_em || ""} onChange={(event) => setForm({ ...form, galeria_publicada_em: event.target.value })} /></label>
                   <label>Link enviado à cliente em<input type="date" value={form.link_enviado_em || ""} onChange={(event) => setForm({ ...form, link_enviado_em: event.target.value })} /></label>
-                  <button className="attachment-button" onClick={() => attach("comprovante_whatsapp")}><Paperclip size={16} /> Anexar comprovante do WhatsApp</button>
+                  {window.gestaoConfig.dataTransport !== "http" && <button className="attachment-button" onClick={() => attach("comprovante_whatsapp")}><Paperclip size={16} /> Anexar comprovante do WhatsApp</button>}
                 </div>
               </section>
 
@@ -751,10 +770,10 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                 <h3>Seleção finalizada</h3>
                 <label>Seleção finalizada em<input type="date" value={form.selecao_finalizada_em || ""} onChange={(event) => setForm({ ...form, selecao_finalizada_em: event.target.value })} /></label>
                 <div className="calculated-dates"><span>Tratamento: {formatDate(detail.order.prazo_tratamento_em)}</span><span>Máximo: {formatDate(detail.order.prazo_maximo_em)}</span></div>
-                <button className="attachment-button" onClick={() => attach("arquivo_selecao")}><Paperclip size={16} /> Anexar arquivo da seleção</button>
+                {window.gestaoConfig.dataTransport !== "http" && <button className="attachment-button" onClick={() => attach("arquivo_selecao")}><Paperclip size={16} /> Anexar arquivo da seleção</button>}
               </section>
 
-              <section className="form-section detail-pane pane-production">
+              <section className="form-section detail-pane pane-production" id="detail-production">
                 <h3>Tratamento</h3>
                 <label>Tratamento concluído em<input type="date" value={form.tratamento_concluido_em || ""} onChange={(event) => setForm({ ...form, tratamento_concluido_em: event.target.value })} /></label>
                 <div className="calculated-dates"><span>Prazo interno: {formatDate(detail.order.prazo_tratamento_em)}</span><span>Prazo máximo: {formatDate(detail.order.prazo_maximo_em)}</span></div>
@@ -767,15 +786,15 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                 <label>Impressões recebidas em<input type="date" value={form.impressao_recebida_em || ""} onChange={(event) => setForm({ ...form, impressao_recebida_em: event.target.value })} /></label>
               </section>
 
-              <section className="form-section detail-pane pane-shipping">
+              <section className="form-section detail-pane pane-shipping" id="detail-shipping">
                 <h3>Etiqueta e entrega</h3>
                 <label>Etiqueta dos Correios criada em<input type="date" value={form.etiqueta_criada_em || ""} onChange={(event) => setForm({ ...form, etiqueta_criada_em: event.target.value })} /></label>
                 <label>Código de rastreio<input value={form.codigo_rastreio || ""} onChange={(event) => setForm({ ...form, codigo_rastreio: event.target.value.toUpperCase() })} /></label>
                 <div className="field-grid two"><label>Postado nos Correios em<input type="date" value={form.postado_em || ""} onChange={(event) => setForm({ ...form, postado_em: event.target.value })} /></label><label>Entregue à cliente em<input type="date" value={form.entregue_em || ""} onChange={(event) => setForm({ ...form, entregue_em: event.target.value })} /></label></div>
-                <button className="attachment-button" onClick={() => attach("etiqueta_correios")}><Paperclip size={16} /> Anexar etiqueta dos Correios</button>
+                {window.gestaoConfig.dataTransport !== "http" && <button className="attachment-button" onClick={() => attach("etiqueta_correios")}><Paperclip size={16} /> Anexar etiqueta dos Correios</button>}
               </section>
 
-              <section className="form-section detail-pane pane-shipping">
+              <section className="form-section detail-pane pane-summary">
                 <h3>Dados e observações</h3>
                 <label>Quantidade de fotos cobradas<input type="number" min="0" value={form.fotos_quantidade || ""} onChange={(event) => setForm({ ...form, fotos_quantidade: event.target.value })} /></label>
                 <label>Observações<textarea value={form.observacoes || ""} onChange={(event) => setForm({ ...form, observacoes: event.target.value })} rows={4} /></label>
@@ -787,7 +806,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               <section><h3>Anexos</h3>{detail.attachments.length ? detail.attachments.map((item) => <button className="file-row" key={item.id} onClick={() => dataService.openAttachment(item.id)}><Paperclip size={14} /><span>{item.nome_arquivo}</span><small>{item.tipo}</small></button>) : <p>Nenhum arquivo anexado.</p>}</section>
               <section><h3>Histórico</h3><div className="event-list">{detail.events.length ? detail.events.map((item) => <div key={item.id}><span>{item.descricao}</span><small>{new Date(item.criado_em).toLocaleString("pt-BR")}{item.usuario_nome ? ` · ${item.usuario_nome}` : ""}</small></div>) : <p>Nenhum evento registrado.</p>}</div></section>
             </div>
-            <footer><span className={`save-state ${formDirty ? "dirty" : ""}`}>{formDirty ? "Alterações não salvas" : "Dados salvos"}</span><button className="secondary" onClick={closeOrder}>Fechar</button><button className="primary" onClick={saveOrder} disabled={busy || !formDirty}><Save size={17} /> Salvar alterações</button></footer>
+            <footer><span className={`save-state ${formDirty ? "dirty" : ""}`}>{formDirty ? "Alterações não salvas" : "Dados salvos"}</span><button className="ui-button" onClick={closeOrder}>Voltar</button><button className="ui-button ui-button-primary" onClick={saveOrder} disabled={busy || !formDirty}><Save size={17} /> Salvar alterações</button></footer>
           </section>
         </div>
       )}

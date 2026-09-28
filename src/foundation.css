@@ -92,3 +92,62 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .orders-screen .orders-table thead th{padding-top:12px;padding-bottom:12px}
 .orders-screen .bulk-bar{max-height:160px;overflow:auto;flex:none}
 @media(max-width:1050px){.orders-screen{height:calc(100dvh - 110px)}}
+/* Ficha em página de trabalho, alinhada à navegação compartilhada. */
+.detail-backdrop{position:fixed;inset:72px 0 0 216px;z-index:19;display:block;padding:0;background:var(--ui-bg);backdrop-filter:none;overflow:hidden}
+.detail-backdrop .detail-modal{width:100%;height:100%;max-height:none;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:var(--ui-bg);overflow:auto;overscroll-behavior:contain}
+.detail-modal .detail-head{position:sticky;top:0;z-index:8;min-height:76px;margin:0;padding:16px 24px;display:flex;gap:20px;border-bottom:1px solid var(--ui-border);background:white;backdrop-filter:none}
+.detail-modal .detail-identity{min-width:0;gap:12px}
+.detail-modal .detail-identity h2{font-size:20px;color:var(--ui-text);line-height:1.3;margin:0}
+.detail-modal .detail-identity p{font-size:12px;color:var(--ui-muted);margin:4px 0 0}
+.detail-modal .session-badge{min-width:0;padding:8px 10px;border-radius:6px;background:#eaf0ff;color:var(--ui-primary);box-shadow:none;font-size:14px;letter-spacing:0}
+.detail-modal .detail-summary{max-width:1450px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:20px 24px 16px;border:1px solid var(--ui-border);border-radius:8px;background:white;box-shadow:none}
+.detail-modal .summary-status,.detail-modal .summary-item{min-height:64px;padding:12px 14px}
+.detail-modal .summary-item small{font-size:11px;color:var(--ui-muted)}
+.detail-modal .summary-item strong{font-size:13px;color:var(--ui-text)}
+.detail-modal .workflow-block{max-width:1450px;margin:0 24px 16px;padding:16px;border:1px solid var(--ui-border);border-radius:8px;box-shadow:none}
+.detail-modal .workflow-heading strong{font-size:13px}.detail-modal .workflow-heading span{font-size:12px;color:var(--ui-muted)}
+.detail-modal .workflow-copy strong{font-size:12px}.detail-modal .workflow-copy small,.detail-modal .workflow-date{font-size:11px}
+.detail-modal .workflow-dot{box-shadow:none}
+.detail-modal .detail-nav{position:sticky;top:76px;z-index:7;display:flex;gap:20px;align-items:center;margin:0 0 18px;padding:0 24px;border-bottom:1px solid var(--ui-border);background:#fff;backdrop-filter:none}
+.detail-modal .detail-nav button{min-height:50px;display:flex;flex-direction:row;align-items:center;gap:8px;padding:8px 2px;border:0;border-bottom:3px solid transparent;background:none;color:var(--ui-muted);box-shadow:none}
+.detail-modal .detail-nav button strong{font-size:13px}.detail-modal .detail-nav button small{font-size:12px;color:var(--ui-muted)}
+.detail-modal .detail-nav button.active{border-bottom-color:var(--ui-primary);color:var(--ui-primary);background:none;box-shadow:none}
+.detail-modal .detail-pane{display:none}
+.detail-modal[data-tab="summary"] .pane-summary,.detail-modal[data-tab="operation"] .pane-selection,.detail-modal[data-tab="operation"] .pane-production,.detail-modal[data-tab="operation"] .pane-shipping{display:block}
+.detail-modal[data-tab="history"] .detail-bottom.pane-history{display:grid}
+.detail-modal[data-tab="history"] .detail-grid{display:none}
+.detail-modal .next-action-card{max-width:1450px;margin:0 24px 16px;padding:18px;gap:20px;border:1px solid var(--ui-border);border-left:3px solid var(--ui-primary);border-radius:8px;background:#f8faff;box-shadow:none}
+.detail-modal .next-action-card strong{font-size:16px;color:var(--ui-text);line-height:1.5}
+.detail-modal .next-action-card p{font-size:13px;line-height:1.5;color:var(--ui-muted)}
+.detail-modal .detail-grid{max-width:1450px;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0 24px}
+.detail-modal .form-section,.detail-modal .purchased-section,.detail-modal .siwin-observations-section,.detail-modal .selection-email-section,.detail-modal .detail-bottom>section{padding:20px;border:1px solid var(--ui-border);border-radius:8px;background:white;box-shadow:none}
+.detail-modal .form-section h3,.detail-modal .detail-bottom h3,.detail-modal .section-title h3{font-size:16px;line-height:1.4;color:var(--ui-text)}
+.detail-modal .form-section label{font-size:13px;color:var(--ui-text);font-weight:600;line-height:1.5}
+.detail-modal .form-section input,.detail-modal .form-section textarea{font-size:14px;min-height:40px;border:1px solid var(--ui-border);border-radius:6px;padding:8px 12px;outline:0}
+.detail-modal .form-section input:focus-visible,.detail-modal .form-section textarea:focus-visible{outline:3px solid #729df5;outline-offset:2px;box-shadow:none}
+.detail-modal .calculated-dates{font-size:12px}.detail-modal .address{font-size:13px;color:var(--ui-muted)}
+.detail-modal .section-title p,.detail-modal .no-products,.detail-modal .siwin-observation-list p{font-size:13px;line-height:1.6;color:var(--ui-muted)}
+.detail-modal .purchased-section,.detail-modal .selection-email-section,.detail-modal .siwin-observations-section{max-width:1450px;margin:0 24px 16px}
+.detail-modal .detail-bottom{max-width:1450px;gap:16px;margin:0 24px 20px}
+.detail-modal .event-list{max-height:none;overflow:visible}.detail-modal .event-list div{font-size:13px;line-height:1.6;align-items:start}.detail-modal .event-list small{font-size:12px;white-space:normal;color:var(--ui-muted)}
+.detail-modal>footer{position:sticky;bottom:0;z-index:8;margin:24px 0 0;padding:12px 24px;border-top:1px solid var(--ui-border);background:white;backdrop-filter:none;display:flex;gap:10px}
+.detail-modal>footer .ui-button{font-size:13px;min-height:40px}
+.detail-modal>footer .save-state{font-size:13px;color:var(--ui-muted)}
+#detail-selection,#detail-production,#detail-shipping{scroll-margin-top:150px}
+@media(max-width:1050px){.detail-backdrop{left:180px}.detail-modal .detail-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.detail-modal .detail-grid{grid-template-columns:1fr}.detail-modal .form-section.span-2{grid-column:span 1}.detail-modal .detail-bottom{grid-template-columns:1fr}.detail-modal .workflow-rail{grid-template-columns:repeat(7,120px)}.detail-modal .detail-nav{overflow-x:auto;gap:16px}.detail-modal .detail-nav button{white-space:nowrap}}
+.detail-modal .workflow-block{padding:10px 16px;margin-bottom:12px}
+.detail-modal .workflow-heading{margin-bottom:7px}
+.detail-modal .workflow-heading span{display:none}
+.detail-modal .workflow-rail{min-height:44px}
+.detail-modal .workflow-copy small{display:none}
+.detail-modal .workflow-copy strong{font-size:12px;line-height:1.3}
+.detail-modal .workflow-date{font-size:10px}
+.detail-modal .detail-summary{margin-top:14px;margin-bottom:12px}
+.detail-modal .next-action-card{padding:14px 18px;margin-bottom:14px}
+.detail-modal .next-action-card>div{gap:4px}
+.detail-modal .next-action-card .ui-button{align-self:center;white-space:nowrap}
+.detail-modal .detail-nav{margin-bottom:14px}
+.detail-modal .detail-nav button small{display:none}
+.detail-modal .form-section .attachment-button{font-size:12px;min-height:38px}
+.detail-modal .selection-actions .attachment-button{font-size:12px;min-height:38px}
+@media(max-width:1050px){.detail-modal .workflow-rail{grid-template-columns:repeat(7,110px)}}
