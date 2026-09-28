@@ -54,4 +54,5 @@ contextBridge.exposeInMainWorld("gestaoSession", {
   read: () => ipcRenderer.invoke("auth-session:read"),
   write: (token) => ipcRenderer.invoke("auth-session:write", token),
   clear: () => ipcRenderer.invoke("auth-session:clear"),
+  retryRemoteConfig: () => ipcRenderer.invoke("remote-config:retry"),
 });

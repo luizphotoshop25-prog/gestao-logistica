@@ -166,7 +166,12 @@ type AppUpdateState =
 
 interface Window {
   gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
-  gestaoSession: { read(): Promise<string>; write(token: string): Promise<{ ok: boolean }>; clear(): Promise<{ ok: boolean }> };
+  gestaoSession: {
+    read(): Promise<string>;
+    write(token: string): Promise<{ ok: boolean }>;
+    clear(): Promise<{ ok: boolean }>;
+    retryRemoteConfig(): Promise<{ ok: boolean; message?: string }>;
+  };
   gestaoAPI: {
     status(): Promise<Record<string, unknown>>;
     dashboard(): Promise<{ ok: boolean; dashboard: DashboardSummary }>;

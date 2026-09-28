@@ -2,11 +2,19 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { listPackage } = require("@electron/asar");
+const builderConfig = require("../electron-builder.config.cjs");
 
 async function main() {
   const packageDirectory = process.env.GESTAO_PACKAGED_DIR || "release/win-unpacked";
   const archive = path.resolve(packageDirectory, "resources/app.asar");
   assert.ok(fs.existsSync(archive), `Pacote não encontrado: ${archive}`);
+  const remoteBuild = process.env.GESTAO_CLIENT_BUILD === "remote";
+  const markerPath = path.resolve(packageDirectory, "resources/client-build.json");
+  assert.ok(fs.existsSync(markerPath), "Manifesto do perfil não foi incluído nos recursos do aplicativo.");
+  assert.equal(JSON.parse(fs.readFileSync(markerPath, "utf8")).variant, remoteBuild ? "remote" : "local");
+  assert.equal(builderConfig.nsis.createDesktopShortcut, true);
+  assert.equal(builderConfig.nsis.createStartMenuShortcut, true);
+  assert.equal(builderConfig.nsis.shortcutName, "Gestão Logística");
 
   const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
   const files = await listPackage(archive);

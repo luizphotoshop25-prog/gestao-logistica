@@ -8,16 +8,20 @@ const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
 const thunderbird = require("./thunderbird.cjs");
 const { loadClientConfig } = require("./client-config.cjs");
+const { checkRemoteApiHealth, resolveRemoteConfig } = require("./remote-config.cjs");
+const { loadClientBuild } = require("./client-build.cjs");
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 
-const clientConfig = loadClientConfig({
-  configPath: process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json"),
-});
-const httpMode = clientConfig.transport === "http";
-if (httpMode) {
+const buildMarker = loadClientBuild({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
+const remoteClientBuild = buildMarker.variant === "remote";
+let clientConfig = remoteClientBuild
+  ? { transport: "http", apiUrl: "", mode: "https-remote" }
+  : loadClientConfig({ configPath: process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json") });
+let httpMode = remoteClientBuild || clientConfig.transport === "http";
+function configureHttpTransport(apiUrl) {
   const profile = process.env.GESTAO_HTTP_TEST_PROFILE;
-  const target = new URL(clientConfig.apiUrl);
+  const target = new URL(apiUrl);
   if (target.protocol === "http:" && (target.hostname === "127.0.0.1" || target.hostname === "localhost")) {
     if (app.isPackaged || !profile || !path.isAbsolute(profile)) throw new Error("HTTP loopback exige desenvolvimento com perfil temporário explícito.");
     const parent = fs.realpathSync(path.dirname(profile));
@@ -28,8 +32,10 @@ if (httpMode) {
     app.setPath("userData", profile);
   }
   process.env.GESTAO_DATA_TRANSPORT = "http";
-  process.env.GESTAO_API_URL = clientConfig.apiUrl;
+  process.env.GESTAO_API_URL = apiUrl;
 }
+if (remoteClientBuild) process.env.GESTAO_DATA_TRANSPORT = "http";
+else if (httpMode) configureHttpTransport(clientConfig.apiUrl);
 
 let mainWindow;
 let siwinTimer;
@@ -50,6 +56,15 @@ function registerSessionIpc() {
   ipcMain.handle("auth-session:clear", (event) => {
     if (!trusted(event)) return { ok: false };
     fs.rmSync(sessionFile(), { force: true });
+    return { ok: true };
+  });
+  ipcMain.handle("remote-config:retry", async (event) => {
+    if (!trusted(event) || !remoteClientBuild) return { ok: false, message: "Nova tentativa remota indisponível." };
+    const result = await loadReadyRemoteConfig();
+    if (!result.ok) return { ok: false, message: result.message };
+    clientConfig.apiUrl = result.config.apiBaseUrl;
+    configureHttpTransport(clientConfig.apiUrl);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
     return { ok: true };
   });
 }
@@ -213,7 +228,42 @@ function createWindow() {
   else mainWindow.loadURL(devServerUrl);
 }
 
-app.whenReady().then(() => {
+async function loadReadyRemoteConfig() {
+  const cachePath = path.join(app.getPath("userData"), "gestao-client-cache.json");
+  const result = await resolveRemoteConfig({ cachePath });
+  if (!result.ok) return result;
+  const health = await checkRemoteApiHealth(result.config.apiBaseUrl);
+  if (!health.ok) return { ok: false, error: "REMOTE_API_UNAVAILABLE", message: health.message };
+  return result;
+}
+
+async function prepareRemoteClient() {
+  while (true) {
+    const result = await loadReadyRemoteConfig();
+    if (result.ok) {
+      clientConfig.apiUrl = result.config.apiBaseUrl;
+      configureHttpTransport(clientConfig.apiUrl);
+      return true;
+    }
+    const choice = await dialog.showMessageBox({
+      type: "error",
+      title: "Gestão Logística",
+      message: "Não foi possível conectar ao servidor da empresa.",
+      detail: result.message,
+      buttons: ["Tentar novamente", "Fechar"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (choice.response !== 0) {
+      app.quit();
+      return false;
+    }
+  }
+}
+
+app.whenReady().then(async () => {
+  if (remoteClientBuild && !(await prepareRemoteClient())) return;
   if (!httpMode) database.initialize(app);
   registerSessionIpc();
   registerIpc();
