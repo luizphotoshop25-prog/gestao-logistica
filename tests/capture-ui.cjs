@@ -188,7 +188,7 @@ app.whenReady().then(() => {
         const solicitationDetailPath = outputPath.replace(/\.png$/i, "-solicitacao-detalhe.png");
         await capture(window, solicitationDetailPath);
         generatedPaths.push(solicitationDetailPath);
-        await window.webContents.executeJavaScript("document.querySelector('.solicitation-modal .icon-button')?.click()");
+        await window.webContents.executeJavaScript("document.querySelector('.solicitation-detail-pane .icon-button')?.click()");
         await delay(180);
         await window.webContents.executeJavaScript("document.querySelector('.solicitations-new')?.click()");
         await waitForSelector(window, "#solicitation-create-title");

@@ -393,7 +393,6 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   };
 
   const openSolicitationSession = async (session: string) => {
-    setWorkspacePage("orders");
     try {
       const result = await dataService.listOrders({ search: session, filter: "all" });
       const order = result.ok ? result.rows.find((row) => row.sessao.toUpperCase() === session.toUpperCase()) : undefined;

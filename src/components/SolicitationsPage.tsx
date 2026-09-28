@@ -100,18 +100,25 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
   const [sessionOptions, setSessionOptions] = useState<string[]>([]);
   const [sessionQuery, setSessionQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [deadlineFilter, setDeadlineFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
 
   const reload = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
       const result = await dataService.listSolicitations();
       if (result.ok) setItems(result.rows);
-      else onNotice(result.message || "Não foi possível carregar as solicitações.");
+      else setLoadError(result.message || "Não foi possível carregar as solicitações.");
       if (isCoordinator) {
         const users = await dataService.listSolicitationAssignees();
         if (users.ok) setAssignees(users.rows);
         else onNotice(users.message || "Não foi possível carregar os responsáveis.");
       }
-    } catch (error) { onNotice(error instanceof Error ? error.message : "Não foi possível conectar às solicitações."); }
+    } catch (error) { setLoadError(error instanceof Error ? error.message : "Não foi possível conectar às solicitações."); }
+    finally { setLoading(false); }
   }, [isCoordinator, onNotice]);
 
   useEffect(() => { void reload(); }, [reload]);
@@ -133,8 +140,13 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
     const matchesSearch = !query || item.descricao.toLocaleLowerCase("pt-BR").includes(query)
       || (item.sessao_codigo || "").toLocaleLowerCase("pt-BR").includes(query)
       || item.responsavel_nome.toLocaleLowerCase("pt-BR").includes(query);
-    return matchesFilter && matchesSearch;
-  })), [filter, items, search]);
+    const matchesAssignee = assigneeFilter === "all" || item.responsavel_usuario_id === assigneeFilter;
+    const matchesDeadline = deadlineFilter === "all"
+      || (deadlineFilter === "overdue" && item.atrasada)
+      || (deadlineFilter === "today" && !item.atrasada && isSolicitationDueToday(item.prazo_em))
+      || (deadlineFilter === "none" && !item.prazo_em);
+    return matchesFilter && matchesSearch && matchesAssignee && matchesDeadline;
+  })), [filter, items, search, assigneeFilter, deadlineFilter]);
   const counts = useMemo(() => ({
     open: items.filter((item) => ["pending", "in_progress"].includes(item.status)).length,
     pending: items.filter((item) => item.status === "pending").length,
@@ -238,16 +250,16 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
   return <section className="solicitations-page">
     <header className="solicitations-heading">
       <div className="solicitations-heading-copy">
-        <button className="solicitations-back" onClick={onBack}><ArrowLeft size={15} /> Pedidos</button>
-        <span className="section-kicker">EQUIPE</span>
-        <h2>Solicitações</h2>
-        <p>Acompanhe tarefas e pendências direcionadas à equipe.</p>
+        <span className="section-kicker">CENTRAL DE TRABALHO</span>
+        <h2>{isCoordinator ? "Solicitações da equipe" : "Minhas solicitações"}</h2>
+        <p>{isCoordinator ? "Distribua tarefas e acompanhe o que precisa de ação." : "Acompanhe suas tarefas e atualize o andamento."}</p>
       </div>
       {isCoordinator && <button className="primary solicitations-new" onClick={() => { setForm(emptyForm); setSessionQuery(""); setCreateOpen(true); }}><Plus size={16} /> Nova solicitação</button>}
     </header>
 
     <div className="solicitation-summary" aria-label="Resumo das solicitações">
-      <span><strong>{counts.pending}</strong> Pendentes</span>
+      <span><strong>{counts.open}</strong> Em aberto</span>
+      <span><strong>{counts.pending}</strong> A iniciar</span>
       <span><strong>{counts.in_progress}</strong> Em andamento</span>
       <span className={counts.overdue ? "has-overdue" : ""}><strong>{counts.overdue}</strong> Atrasadas</span>
     </div>
@@ -258,9 +270,18 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
       </div>
       <label className="solicitation-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar solicitação, sessão ou responsável" /></label>
     </div>
+    <div className="solicitation-refine" aria-label="Refinar solicitações">
+      <label>Prazo <select value={deadlineFilter} onChange={(event) => setDeadlineFilter(event.target.value)}><option value="all">Todos os prazos</option><option value="overdue">Atrasadas</option><option value="today">Vencem hoje</option><option value="none">Sem prazo</option></select></label>
+      {isCoordinator && <label>Responsável <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">Toda a equipe</option>{assignees.map((person) => <option key={person.id} value={person.id}>{person.nome}</option>)}</select></label>}
+      {(search || deadlineFilter !== "all" || assigneeFilter !== "all") && <button type="button" onClick={() => { setSearch(""); setDeadlineFilter("all"); setAssigneeFilter("all"); }}>Limpar filtros</button>}
+    </div>
 
-    <div className="solicitation-list" aria-busy={busy}>
-      {visibleItems.map((item) => <article className="solicitation-card" key={item.id}>
+    <div className={`solicitation-workspace ${selected ? "has-selection" : ""}`}>
+    <div className="solicitation-list" aria-busy={busy || loading}>
+      <div className="solicitation-list-heading"><strong>{statusFilters.find(([key]) => key === filter)?.[1]}</strong><span>{visibleItems.length} {visibleItems.length === 1 ? "tarefa" : "tarefas"}</span></div>
+      {loading && <div className="solicitation-empty"><Clock3 size={25} /><strong>Carregando solicitações</strong><span>Aguarde enquanto buscamos as tarefas.</span></div>}
+      {!loading && loadError && <div className="solicitation-empty" role="alert"><strong>Não foi possível carregar</strong><span>{loadError}</span><button className="secondary" onClick={() => void reload()}>Tentar novamente</button></div>}
+      {!loading && !loadError && visibleItems.map((item) => <article className={`solicitation-card ${selected?.id === item.id ? "is-selected" : ""}`} key={item.id}>
         <button className="solicitation-card-main" onClick={() => void openDetail(item)}>
           <span className={`solicitation-status ${item.status}`}>{statusLabels[item.status]}</span>
           <strong className="solicitation-card-title">{item.descricao}</strong>
@@ -273,10 +294,10 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
         </button>
         <button className="solicitation-open" aria-label={`Ver detalhes: ${item.descricao}`} onClick={() => void openDetail(item)}>Ver detalhes <ArrowLeft size={14} /></button>
       </article>)}
-      {!visibleItems.length && <div className="solicitation-empty"><ClipboardList size={25} />
-        <strong>{search ? "Nenhuma solicitação encontrada" : items.length === 0 && isCoordinator ? "Nenhuma solicitação criada" : `Nenhuma solicitação ${emptyFilterLabel}`}</strong>
-        <span>{search ? "Tente outro termo ou limpe a busca." : items.length === 0 && isCoordinator ? "Crie uma solicitação para organizar uma tarefa da equipe." : "Você está em dia com as tarefas desta lista."}</span>
-        {search && <button className="secondary" onClick={() => setSearch("")}>Limpar busca</button>}
+      {!loading && !loadError && !visibleItems.length && <div className="solicitation-empty"><ClipboardList size={25} />
+        <strong>{search || deadlineFilter !== "all" || assigneeFilter !== "all" ? "Nenhuma solicitação encontrada" : items.length === 0 && isCoordinator ? "Nenhuma solicitação criada" : `Nenhuma solicitação ${emptyFilterLabel}`}</strong>
+        <span>{search || deadlineFilter !== "all" || assigneeFilter !== "all" ? "Ajuste ou limpe os filtros para ver outras tarefas." : items.length === 0 && isCoordinator ? "Crie uma solicitação para organizar uma tarefa da equipe." : "Você está em dia com as tarefas desta lista."}</span>
+        {(search || deadlineFilter !== "all" || assigneeFilter !== "all") && <button className="secondary" onClick={() => { setSearch(""); setDeadlineFilter("all"); setAssigneeFilter("all"); }}>Limpar filtros</button>}
         {!search && items.length === 0 && isCoordinator && <button className="primary" onClick={() => { setForm(emptyForm); setCreateOpen(true); }}><Plus size={15} /> Nova solicitação</button>}
       </div>}
     </div>
@@ -289,8 +310,7 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
       </form>
     </div>}
 
-    {selected && <div className="modal-backdrop solicitation-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { setSelected(null); setEditing(false); } }}>
-      <section className="modal solicitation-modal" role="dialog" aria-modal="true" aria-labelledby="solicitation-detail-title">
+    {selected ? <section className="solicitation-detail-pane" aria-labelledby="solicitation-detail-title">
         <header className="solicitation-modal-heading"><div><span className={`solicitation-status ${selected.status}`}>{statusLabels[selected.status]}</span><h2 id="solicitation-detail-title">{editing ? "Editar solicitação" : "Detalhes da solicitação"}</h2></div><button type="button" className="icon-button" onClick={() => { setSelected(null); setEditing(false); }} aria-label="Fechar"><X size={18} /></button></header>
         {editing ? <form onSubmit={(event) => void saveEdit(event)}>
           <SolicitationFields form={form} assignees={assignees} sessionOptions={sessionOptions} onChange={setForm} onSessionQuery={setSessionQuery} />
@@ -302,7 +322,7 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
             <div><dt>Criado por</dt><dd>{selected.criado_por_nome}</dd></div>
             <div><dt>Solicitada em</dt><dd>{formatSolicitationDate(selected.solicitada_em)}</dd></div>
             <div><dt>Prazo</dt><dd className={selected.atrasada ? "solicitation-overdue-text" : ""}>{formatSolicitationDeadline(selected.prazo_em, selected.atrasada)}</dd></div>
-            <div><dt>Sessão</dt><dd>{selected.sessao_codigo ? <button className="solicitation-session-link" onClick={() => { setSelected(null); onOpenOrder(selected.sessao_codigo!); }}>{selected.sessao_codigo}</button> : "—"}</dd></div>
+            <div><dt>Sessão</dt><dd>{selected.sessao_codigo ? <button className="solicitation-session-link" onClick={() => onOpenOrder(selected.sessao_codigo!)}>{selected.sessao_codigo}</button> : "—"}</dd></div>
             {selected.iniciado_em && <div><dt>Iniciada em</dt><dd>{formatSolicitationDate(selected.iniciado_em)}</dd></div>}
             {selected.concluido_em && <div><dt>Concluída em</dt><dd>{formatSolicitationDate(selected.concluido_em)}</dd></div>}
             {selected.cancelado_em && <div><dt>Cancelada em</dt><dd>{formatSolicitationDate(selected.cancelado_em)}</dd></div>}
@@ -315,7 +335,7 @@ export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, 
             {itemCanReopen && <button className="secondary" onClick={() => void transition("reopen")} disabled={busy}><RotateCcw size={15} /> Reabrir</button>}
           </div>
         </>}
-      </section>
-    </div>}
+      </section> : <aside className="solicitation-detail-placeholder"><ClipboardList size={32} /><strong>Selecione uma solicitação</strong><span>Abra uma tarefa da lista para ver o contexto e as ações disponíveis.</span></aside>}
+    </div>
   </section>;
 }
