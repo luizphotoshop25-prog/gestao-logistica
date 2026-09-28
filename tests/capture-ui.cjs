@@ -132,6 +132,8 @@ app.whenReady().then(() => {
           await waitForSelector(window, ".auth-card");
           await window.webContents.executeJavaScript(`(() => { const inputs=document.querySelectorAll('.auth-card input'); const set=(input,value)=>{ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,value); input.dispatchEvent(new Event('input',{bubbles:true})); }; set(inputs[0],${JSON.stringify(captureUser)}); set(inputs[1],${JSON.stringify(capturePassword)}); document.querySelector('.auth-card').requestSubmit(); })()`);
         }
+        await waitForSelector(window, ".app-navigation");
+        await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[1].click()");
         await waitForSelector(window, ".session-link");
         const visible = await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(expectedSession)}) && document.body.innerText.includes(${JSON.stringify(expectedClientName)}) && typeof window.gestaoAPI.getOrder === "function" && (!${httpTransport} || window.gestaoConfig.dataTransport === "http")`);
         if (!visible) throw new Error("Fixture ou preload ausente.");

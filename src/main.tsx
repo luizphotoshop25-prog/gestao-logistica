@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { AuthenticatedApp } from "./AuthenticatedApp";
 import "./styles.css";
+import "./foundation.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

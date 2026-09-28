@@ -4,6 +4,7 @@ import { dataService } from "../services/dataService";
 import { formatSolicitationDate, formatSolicitationDeadline, isSolicitationDueToday, sortSolicitationsByUrgency, toLocalDateTimeInput } from "../utils/solicitation-date";
 
 type Props = {
+  initialSelection?: Solicitation | null;
   currentUser: AuthUser;
   onBack: () => void;
   onNotice: (message: string) => void;
@@ -86,13 +87,13 @@ export function SolicitationIndicator({ onOpen }: { onOpen: () => void }) {
   </button>;
 }
 
-export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder }: Props) {
+export function SolicitationsPage({ currentUser, onBack, onNotice, onOpenOrder, initialSelection }: Props) {
   const isCoordinator = currentUser.role === "coordinator";
   const [items, setItems] = useState<Solicitation[]>([]);
   const [assignees, setAssignees] = useState<ActiveUser[]>([]);
   const [filter, setFilter] = useState<(typeof statusFilters)[number][0]>("open");
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Solicitation | null>(null);
+  const [selected, setSelected] = useState<Solicitation | null>(initialSelection || null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<SolicitationForm>(emptyForm);

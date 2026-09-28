@@ -9,7 +9,7 @@ type Props = {
   onClose(): void;
   onOpenOrder(order: Order): void;
   onFilter(filter: string): void;
-  onClients(): void;
+  onClients?: () => void;
 };
 
 const shortcuts = [
@@ -28,7 +28,7 @@ export function CommandPalette({ open, query, results, onQueryChange, onClose, o
   }, [open, query]);
   if (!open) return null;
 
-  const itemCount = query.trim() ? results.length : shortcuts.length + 1;
+  const itemCount = query.trim() ? results.length : shortcuts.length + (onClients ? 1 : 0);
   const chooseActive = () => {
     if (query.trim()) {
       const order = results[activeIndex];
@@ -36,7 +36,7 @@ export function CommandPalette({ open, query, results, onQueryChange, onClose, o
       return;
     }
     if (activeIndex < shortcuts.length) onFilter(shortcuts[activeIndex].action);
-    else onClients();
+    else onClients?.();
   };
 
   return <div className="command-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -57,7 +57,7 @@ export function CommandPalette({ open, query, results, onQueryChange, onClose, o
         </> : <>
           <span className="command-section-label">NAVEGAÇÃO RÁPIDA</span>
           {shortcuts.map((item, index) => { const Icon = item.icon; return <button key={item.action} className={`command-result ${index === activeIndex ? "active" : ""}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => onFilter(item.action)}><span className="command-icon"><Icon size={16} /></span><span className="command-main"><strong>{item.label}</strong><small>{item.hint}</small></span><ArrowRight size={16} /></button>; })}
-          <button className={`command-result ${activeIndex === shortcuts.length ? "active" : ""}`} onMouseEnter={() => setActiveIndex(shortcuts.length)} onClick={onClients}><span className="command-icon"><Users size={16} /></span><span className="command-main"><strong>Consultar cadastro de clientes</strong><small>Nome, telefone, e-mail ou CAD</small></span><ArrowRight size={16} /></button>
+          {onClients && <button className={`command-result ${activeIndex === shortcuts.length ? "active" : ""}`} onMouseEnter={() => setActiveIndex(shortcuts.length)} onClick={onClients}><span className="command-icon"><Users size={16} /></span><span className="command-main"><strong>Consultar cadastro de clientes</strong><small>Nome, telefone, e-mail ou CAD</small></span><ArrowRight size={16} /></button>}
         </>}
       </div>
       <footer><span><kbd>↑</kbd><kbd>↓</kbd> navegar</span><span><CornerDownLeft size={13} /> abrir</span><span><kbd>Ctrl K</kbd> de qualquer tela</span></footer>

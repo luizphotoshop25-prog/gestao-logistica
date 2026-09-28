@@ -26,6 +26,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { Central } from "./components/Central";
 import { CommandPalette } from "./components/CommandPalette";
 import { Hint } from "./components/Hint";
 import { IntegrationMenu } from "./components/IntegrationMenu";
@@ -109,7 +110,9 @@ const formatLastMovement = (value: string | null) => {
   return `Há ${days} dias`;
 };
 
-export function App({ currentUser }: { currentUser: AuthUser }) {
+export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout?: () => void }) {
+  const [centralQueue, setCentralQueue] = useState("needs_me");
+  const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [dashboard, setDashboard] = useState<DashboardSummary>({
     total: 0,
@@ -135,7 +138,7 @@ export function App({ currentUser }: { currentUser: AuthUser }) {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [workspacePage, setWorkspacePage] = useState<"orders" | "solicitations">("orders");
+  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "solicitations">("central");
   const [lastSiwinSync, setLastSiwinSync] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -504,6 +507,8 @@ export function App({ currentUser }: { currentUser: AuthUser }) {
   const applyCommandFilter = (nextFilter: string) => {
     setCommandOpen(false);
     setCommandQuery("");
+    setSearch("");
+    setWorkspacePage("orders");
     setFilter(nextFilter);
   };
 
@@ -536,28 +541,27 @@ export function App({ currentUser }: { currentUser: AuthUser }) {
 
   return (
     <div className="app-shell" aria-busy={busy}>
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark"><Layers3 size={25} /></div>
-          <div className="brand-copy">
-            <span className="eyebrow">ESTÚDIO MANOEL GUIMARÃES</span>
-            <h1>Gestão Logística</h1>
-            <p>Central de pedidos e entregas <small className="app-version">v{__APP_VERSION__}</small></p>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <div className="system-status"><span className="status-dot" /><div><strong>Sistema local ativo</strong><small>SIWIN protegido · somente leitura</small></div></div>
-          <IntegrationMenu busy={busy} lastSync={lastSiwinSync} onThunderbird={() => void syncThunderbird()} onSiwin={() => void syncSiwin()} onImport={() => void openImport()} />
-        </div>
+      <nav className="app-navigation" aria-label="Navegação principal">
+        <div className="shell-brand"><Layers3 size={25} /><div><strong>Gestão Logística</strong><small>Estúdio Manoel Guimarães</small></div></div>
+        <span className="section-kicker">OPERAÇÃO</span>
+        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); setWorkspacePage(key); }}><Icon size={18} />{label}</button>)}
+        {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button onClick={() => setShowClients(true)}><Users size={18} />Clientes</button></div>}
+        <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
+      </nav>
+      <header className="shell-header">
+        <Hint label="Buscar pedidos e acessar atalhos (Ctrl+K)"><button className="shell-search ui-button" onClick={() => setCommandOpen(true)}><Search size={16} />Buscar pedidos e atalhos <kbd>Ctrl K</kbd></button></Hint>
+        <div className="shell-account"><span className="shell-connection">{window.gestaoConfig.dataTransport === 'http' ? 'Acesso remoto' : 'Acesso local'}</span><div><strong>{currentUser.nome}</strong><small>{currentUser.role === 'employee' ? 'Funcionário' : 'Coordenador'}</small></div>{onLogout && <button className="ui-button" onClick={onLogout}>Sair</button>}</div>
+        {window.gestaoConfig.dataTransport !== 'http' && <IntegrationMenu busy={busy} lastSync={lastSiwinSync} onThunderbird={() => void syncThunderbird()} onSiwin={() => void syncSiwin()} onImport={() => void openImport()} />}
       </header>
 
       <main>
         {notice && <div className="notice" role="status">{notice}<button aria-label="Fechar aviso" onClick={() => setNotice("")}><X size={15} /></button></div>}
-        {workspacePage === "solicitations" ? <SolicitationsPage
+        {workspacePage === "central" ? <Central queue={centralQueue} onQueue={setCentralQueue} currentUser={currentUser} onOrder={(id) => void openOrder(id)} onOrders={(value) => { setSearch(""); setFilter(value); setWorkspacePage("orders"); }} onSolicitations={(item) => { setCentralTask(item || null); setWorkspacePage("solicitations"); }} /> : workspacePage === "solicitations" ? <SolicitationsPage
           currentUser={currentUser}
           onBack={() => setWorkspacePage("orders")}
           onNotice={setNotice}
           onOpenOrder={(session) => void openSolicitationSession(session)}
+          initialSelection={centralTask}
         /> : <>
         <section className="operations-overview">
           <div className="overview-heading">
@@ -873,7 +877,7 @@ export function App({ currentUser }: { currentUser: AuthUser }) {
         onClose={() => { setCommandOpen(false); setCommandQuery(""); }}
         onOpenOrder={(order) => void openFromCommand(order)}
         onFilter={applyCommandFilter}
-        onClients={() => { setCommandOpen(false); setCommandQuery(""); setShowClients(true); }}
+        onClients={window.gestaoConfig.dataTransport === "http" ? undefined : () => { setCommandOpen(false); setCommandQuery(""); setShowClients(true); }}
       />
 
       {confirmation && (

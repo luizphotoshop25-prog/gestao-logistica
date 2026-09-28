@@ -31,5 +31,5 @@ export function AuthenticatedApp() {
   const logout = async () => { try { await dataService.logout(); } catch { /* Sessão local deve ser limpa mesmo sem rede. */ } finally { await window.gestaoSession.clear(); setUser(null); } };
   if (loading) return <><div className="auth-screen"><p>Validando sessão…</p></div><UpdateNotice /></>;
   if (!user) return <><div className="auth-screen"><form className="auth-card" onSubmit={login}><span>GESTÃO LOGÍSTICA</span><h1>Entrar</h1><label>Usuário<input autoFocus value={usuario} onChange={(event) => setUsuario(event.target.value)} /></label><label>Senha<input type="password" value={senha} onChange={(event) => setSenha(event.target.value)} /></label>{message && <p className="auth-error">{message}</p>}<button className="primary" type="submit">Entrar</button>{httpMode && message.toLocaleLowerCase("pt-BR").includes("conectar") && <button type="button" onClick={() => void retryRemote()} disabled={retrying}>{retrying ? "Verificando servidor…" : "Tentar novamente"}</button>}</form></div><UpdateNotice /></>;
-  return <><App currentUser={user} /><UpdateNotice />{httpMode && <div className="current-user"><span>{user.nome}</span><button onClick={() => void logout()}>Sair</button></div>}</>;
+  return <><App currentUser={user} onLogout={httpMode ? () => void logout() : undefined} /><UpdateNotice /></>;
 }
