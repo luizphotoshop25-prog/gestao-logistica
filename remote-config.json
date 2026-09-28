@@ -1,5 +1,1 @@
-{
-  "apiBaseUrl": "",
-  "environment": "pilot",
-  "enabled": false
-}
+{"environment":"pilot","enabled":true,"apiBaseUrl":"https://disciplines-administrative-dave-strap.trycloudflare.com"}
