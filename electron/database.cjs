@@ -553,6 +553,32 @@ function getOrder(orderId) {
   };
 }
 
+function getOrderClientProfile(orderId) {
+  const row = db.prepare(`SELECT p.cliente_id, c.nome, c.email, c.telefone, c.celular,
+      c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf, c.cep
+    FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.id=?`).get(clean(orderId));
+  if (!row) return { ok: false, error: "NOT_FOUND", message: "Pedido não encontrado." };
+  if (!row.cliente_id) return { ok: true, linked: false, profile: null };
+  return {
+    ok: true,
+    linked: true,
+    profile: {
+      nomeCompleto: row.nome,
+      cpf: null,
+      email: row.email,
+      telefone: row.telefone,
+      celular: row.celular,
+      logradouro: row.logradouro,
+      numero: row.numero,
+      complemento: row.complemento,
+      bairro: row.bairro,
+      cidade: row.cidade,
+      uf: row.uf,
+      cep: row.cep,
+    },
+  };
+}
+
 function updateOrder(input) {
   const orderId = clean(input?.id);
   const expectedRevision = input?.revisao;
@@ -1446,6 +1472,7 @@ module.exports = {
   updateMilestone,
   listClients,
   getOrder,
+  getOrderClientProfile,
   updateOrder,
   createUser,
   listActiveUsers,

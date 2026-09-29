@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Contact,
   Database,
   Image as ImageIcon,
   Layers3,
@@ -26,6 +27,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Hint } from "./components/Hint";
 import { IntegrationMenu } from "./components/IntegrationMenu";
 import { OrderActionsMenu } from "./components/OrderActionsMenu";
+import { OrderClientProfilePopover, type ClientProfileTarget } from "./components/OrderClientProfilePopover";
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
 import { SolicitationsPage } from "./components/SolicitationsPage";
@@ -96,6 +98,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [centralQueue, setCentralQueue] = useState("needs_me");
   const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
   const [orderPreviewId, setOrderPreviewId] = useState<string | null>(null);
+  const [clientProfileTarget, setClientProfileTarget] = useState<ClientProfileTarget | null>(null);
+  const [clientProfileCacheVersion, setClientProfileCacheVersion] = useState(0);
   const [listError, setListError] = useState("");
   const [searchScope, setSearchScope] = useState<"queue" | "all">("queue");
   const [orders, setOrders] = useState<Order[]>([]);
@@ -134,9 +138,27 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [commandResults, setCommandResults] = useState<Order[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const detailReturnFocusRef = useRef<HTMLElement | null>(null);
+  const clientProfileTargetRef = useRef<ClientProfileTarget | null>(null);
   const listRequestRef = useRef(0);
   const formDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(savedForm), [form, savedForm]);
   const pageSize = 50;
+  const closeClientProfile = useCallback((restoreFocus = false) => {
+    const target = clientProfileTargetRef.current;
+    const anchor = target?.anchor;
+    clientProfileTargetRef.current = null;
+    setClientProfileTarget(null);
+    if (restoreFocus && target) window.requestAnimationFrame(() => {
+      const currentAnchor = anchor?.isConnected ? anchor : [...document.querySelectorAll<HTMLElement>("[data-order-profile-trigger]")].find((button) => button.dataset.orderProfileTrigger === target.orderId);
+      currentAnchor?.focus();
+    });
+  }, []);
+  const toggleClientProfile = (order: Order, anchor: HTMLElement) => {
+    if (!order.cliente_id) return;
+    if (clientProfileTargetRef.current?.orderId === order.id) return closeClientProfile(true);
+    const target = { orderId: order.id, clientName: order.cliente_nome || "Cliente", anchor };
+    clientProfileTargetRef.current = target;
+    setClientProfileTarget(target);
+  };
   const dismissOrder = () => {
     const previousFocus = detailReturnFocusRef.current;
     setDetail(null);
@@ -253,6 +275,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   }, []);
 
   useEffect(() => dataService.onSiwinUpdated((result) => {
+    if (result.ok) setClientProfileCacheVersion((value) => value + 1);
     if (result.ok && (result.imported > 0 || result.importedOrders > 0 || result.linked > 0)) {
       setNotice(`${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`);
       void reload();
@@ -272,6 +295,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     const result = await dataService.syncSiwin();
     setBusy(false);
     if (!result.ok) return setNotice(result.message || "Não foi possível sincronizar com o SIWIN.");
+    setClientProfileCacheVersion((value) => value + 1);
     setLastSiwinSync(new Date().toISOString());
     setNotice(result.imported || result.importedOrders || result.linked
       ? `${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`
@@ -622,7 +646,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                   {initialLoading && <TableSkeleton rows={7} columns={bulkMode ? 7 : 6} />}
                   {!initialLoading && visibleOrders.map(order => <tr key={order.id} className={orderPreviewId === order.id ? "order-selected" : ""}>
                     {bulkMode && <td><input type="checkbox" aria-label={"Selecionar sessão " + order.sessao} checked={selectedIds.includes(order.id)} onChange={event => setSelectedIds(event.target.checked ? [...selectedIds, order.id] : selectedIds.filter(id => id !== order.id))} /></td>}
-                    <td><button className="session-link" onClick={() => setOrderPreviewId(order.id)} aria-label={"Consultar sessão " + order.sessao}>{order.sessao}</button><span className="order-secondary">{order.cliente_nome || "Cliente não identificado"}</span></td>
+                    <td><button className="session-link" onClick={() => setOrderPreviewId(order.id)} aria-label={"Consultar sessão " + order.sessao}>{order.sessao}</button><div className="order-client-line"><span className="order-secondary">{order.cliente_nome || "Cliente não identificado"}</span><Hint label="Dados do cliente"><button type="button" className="client-profile-trigger" data-order-profile-trigger={order.id} disabled={!order.cliente_id} title={order.cliente_id ? "Dados do cliente" : "Cliente não vinculado"} aria-label={order.cliente_id ? `Ver dados cadastrais de ${order.cliente_nome || "cliente"}` : "Cliente não vinculado"} aria-expanded={clientProfileTarget?.orderId === order.id} aria-controls={clientProfileTarget?.orderId === order.id ? `client-profile-${order.id.replace(/[^a-zA-Z0-9_-]/g, "")}` : undefined} onClick={(event) => toggleClientProfile(order, event.currentTarget)}><Contact size={15} /></button></Hint></div></td>
                     <td><strong className="order-next">{order.acao_recomendada}</strong><span className="order-secondary">{stageLabels[order.etapa] || order.etapa}</span></td>
                     <td><strong className="order-date">{formatDate(order.prazo_tratamento_em)}</strong>{order.urgencia_texto && <span className="order-warning">{order.urgencia_texto}</span>}</td>
                     <td>{order.responsavel_atual === "Você" ? "Equipe" : order.responsavel_atual}</td>
@@ -640,6 +664,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       </main>
 
       {orderPreviewId && <OrderPreview orderId={orderPreviewId} onClose={() => setOrderPreviewId(null)} onOpenFull={id => { setOrderPreviewId(null); void openOrder(id); }} />}
+      <OrderClientProfilePopover target={clientProfileTarget} cacheVersion={clientProfileCacheVersion} onClose={closeClientProfile} />
 
       {preview && (
         <div className="modal-backdrop">

@@ -21,6 +21,9 @@ async function main() {
   const semverUpdater = new AppUpdater(null, { version: "0.1.5" });
   assert.equal(await semverUpdater.isUpdateAvailable({ version: "0.1.6" }), true, "installed v0.1.5 must detect v0.1.6");
   assert.equal(await semverUpdater.isUpdateAvailable({ version: "0.1.5" }), false, "an identical build version must not be offered as an update");
+  const patchReleaseUpdater = new AppUpdater(null, { version: "0.1.6" });
+  assert.equal(await patchReleaseUpdater.isUpdateAvailable({ version: "0.1.7" }), true, "installed v0.1.6 must detect the client-profile release v0.1.7");
+  assert.equal(await patchReleaseUpdater.isUpdateAvailable({ version: "0.1.6" }), false, "identical versions must never be offered as an update");
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-updater-"));
   try {
@@ -88,7 +91,7 @@ async function main() {
     assert.equal((await failed.download()).ok, false);
     assert.deepEqual(failed.getState(), { status: "error", message: "Não foi possível baixar a atualização. O sistema continua disponível." });
     assert.equal(failed.install().ok, false);
-    console.log("Auto-update: SemVer 0.1.5→0.1.6, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
+    console.log("Auto-update: SemVer 0.1.5→0.1.6 e 0.1.6→0.1.7, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
   } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 

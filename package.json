@@ -1,6 +1,6 @@
 {
   "name": "gestao-logistica",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -34,6 +34,8 @@
     "smoke:auth": "node tests/smoke-auth.cjs",
     "smoke:remote-config": "node tests/smoke-remote-config.cjs",
     "smoke:solicitations": "node tests/smoke-solicitations.cjs && node tests/smoke-solicitation-date.cjs && node tests/smoke-solicitations-ipc.cjs && node tests/smoke-solicitations-http.cjs",
+    "smoke:client-profile": "node tests/smoke-client-profile.cjs",
+    "capture:client-profile": "node tests/capture-client-profile.cjs",
     "smoke:packaged": "node tests/smoke-packaged-runtime.cjs",
     "smoke:lan": "node tests/smoke-lan.cjs",
     "server:lan": "node server/lan-server.cjs",

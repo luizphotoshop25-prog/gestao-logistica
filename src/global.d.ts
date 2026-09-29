@@ -35,6 +35,7 @@ type ImportPreview = {
 
 type Order = Record<string, unknown> & {
   id: string;
+  cliente_id?: string | null;
   revisao: number;
   sessao: string;
   cliente_nome: string | null;
@@ -52,6 +53,25 @@ type Order = Record<string, unknown> & {
   ultima_movimentacao_em: string | null;
   selecoes_pendentes: number;
 };
+
+type OrderClientProfile = {
+  nomeCompleto: string | null;
+  cpf: string | null;
+  email: string | null;
+  telefone: string | null;
+  celular: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  cep: string | null;
+};
+type OrderClientProfileResult =
+  | { ok: true; linked: true; profile: OrderClientProfile }
+  | { ok: true; linked: false; profile: null }
+  | { ok: false; error: string; message: string };
 
 type ClientRow = {
   id: string;
@@ -183,6 +203,7 @@ interface Window {
     prepareSelection(emailId: string): Promise<{ ok: boolean; listPath?: string; total?: number; message?: string }>;
     listOrders(options?: { search?: string; filter?: string }): Promise<{ ok: boolean; rows: Order[] }>;
     getOrder(orderId: string): Promise<OrderDetailResult>;
+    getOrderClientProfile(orderId: string): Promise<OrderClientProfileResult>;
     updateOrder(input: { id: string; revisao: number; values: Record<string, string | number | null> }): Promise<OrderDetailResult>;
     bulkUpdateOrders(input: { ids: string[]; action: string; date?: string }): Promise<{ ok: boolean; updated?: number; skipped?: number; skippedDetails?: string[]; message?: string }>;
     markSelectionEmail(input: { id: string; field: "conferida_em" | "fotos_separadas_em"; value?: string }): Promise<{ ok: boolean; message?: string }>;

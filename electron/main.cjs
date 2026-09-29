@@ -112,6 +112,7 @@ function registerIpc() {
   handle("app:status", () => database.getStatus());
   handle("orders:list", (options) => ({ ok: true, rows: database.listOrders(options) }));
   handle("orders:get", (orderId) => database.getOrder(orderId));
+  handle("orders:client-profile", (orderId) => database.getOrderClientProfile(orderId));
   handle("orders:update", (input) => database.updateOrder(input));
   handle("orders:bulk-update", (input) => database.bulkUpdateOrders(input));
   handle("selection-email:mark", (input) => database.markSelectionEmail(input));

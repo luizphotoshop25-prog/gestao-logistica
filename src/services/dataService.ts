@@ -8,6 +8,7 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "prepareSelection"
   | "listOrders"
   | "getOrder"
+  | "getOrderClientProfile"
   | "updateOrder"
   | "bulkUpdateOrders"
   | "markSelectionEmail"
@@ -45,6 +46,7 @@ export const ipcDataService: DataService = {
   prepareSelection: (emailId) => window.gestaoAPI.prepareSelection(emailId),
   listOrders: (options) => window.gestaoAPI.listOrders(options),
   getOrder: (orderId) => window.gestaoAPI.getOrder(orderId),
+  getOrderClientProfile: (orderId) => window.gestaoAPI.getOrderClientProfile(orderId),
   updateOrder: (input) => window.gestaoAPI.updateOrder(input),
   bulkUpdateOrders: (input) => window.gestaoAPI.bulkUpdateOrders(input),
   markSelectionEmail: (input) => window.gestaoAPI.markSelectionEmail(input),
@@ -115,6 +117,7 @@ export function createHttpDataService(apiUrl: string): DataService {
     prepareSelection: async () => unsupported(),
     listOrders: (options) => request(`/api/orders?search=${encodeURIComponent(options?.search || "")}&filter=${encodeURIComponent(options?.filter || "all")}`),
     getOrder: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}`),
+    getOrderClientProfile: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}/client-profile`),
     updateOrder: (input) => request(`/api/orders/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revisao: input.revisao, values: input.values }) }),
     bulkUpdateOrders: async () => unsupported(),
     markSelectionEmail: async () => unsupported(),

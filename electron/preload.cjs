@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   prepareSelection: (emailId) => ipcRenderer.invoke("thunderbird:prepare-selection", emailId),
   listOrders: (options) => ipcRenderer.invoke("orders:list", options),
   getOrder: (orderId) => ipcRenderer.invoke("orders:get", orderId),
+  getOrderClientProfile: (orderId) => ipcRenderer.invoke("orders:client-profile", orderId),
   updateOrder: (input) => ipcRenderer.invoke("orders:update", input),
   bulkUpdateOrders: (input) => ipcRenderer.invoke("orders:bulk-update", input),
   markSelectionEmail: (input) => ipcRenderer.invoke("selection-email:mark", input),

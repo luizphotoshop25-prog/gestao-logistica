@@ -91,6 +91,30 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .orders-screen .orders-table tbody td{padding-top:11px;padding-bottom:11px}
 .orders-screen .orders-table thead th{padding-top:12px;padding-bottom:12px}
 .orders-screen .bulk-bar{max-height:160px;overflow:auto;flex:none}
+.order-client-line{display:flex;align-items:center;gap:5px;min-width:0}
+.order-client-line .order-secondary{min-width:0;overflow-wrap:anywhere}
+.client-profile-trigger{flex:none;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ui-muted);cursor:pointer}
+.client-profile-trigger:hover:not(:disabled),.client-profile-trigger[aria-expanded=true]{border-color:#c8d6ef;background:#edf3ff;color:var(--ui-primary)}
+.client-profile-trigger:disabled{opacity:.35;cursor:not-allowed}
+.client-profile-popover{position:fixed;z-index:90;max-height:calc(100vh - 24px);overflow:auto;overscroll-behavior:contain;padding:18px;background:white;border:1px solid var(--ui-border);border-radius:10px;box-shadow:0 16px 44px #172b4d26;color:var(--ui-text)}
+.client-profile-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:1px solid #e9eef5}
+.client-profile-header h2{margin:5px 0 0;font-size:17px;line-height:1.4;overflow-wrap:anywhere}
+.client-profile-close{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--ui-border);border-radius:6px;background:white;color:var(--ui-muted);cursor:pointer}
+.client-profile-close:hover{background:#f3f6fa;color:var(--ui-text)}
+.client-profile-fields{display:grid;margin-top:4px}
+.client-profile-field{display:grid;grid-template-columns:96px minmax(0,1fr) 30px;gap:10px;align-items:center;min-height:42px;padding:7px 0;border-bottom:1px solid #eef1f5}
+.client-profile-field>span{font-size:11px;color:var(--ui-muted)}
+.client-profile-field>strong{font-size:12px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;white-space:pre-line}
+.client-profile-field>button{width:28px;height:28px;display:grid;place-items:center;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--ui-muted);cursor:pointer}
+.client-profile-field>button:hover{border-color:var(--ui-border);background:#f4f7fb;color:var(--ui-primary)}
+.client-profile-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;min-height:36px}
+.client-profile-footer>[role=status]{font-size:11px;color:#258164}
+.client-profile-footer .ui-button{color:var(--ui-primary)}
+.client-profile-loading{min-height:116px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--ui-muted);font-size:12px}
+.client-profile-loading .ui-spinner{width:18px;height:18px;border-width:2px}
+.client-profile-error{display:grid;gap:12px;padding:20px 4px 4px;font-size:13px;color:var(--ui-danger)}
+.client-profile-error button{justify-self:start;border:1px solid var(--ui-border);border-radius:6px;background:white;color:var(--ui-primary);padding:8px 10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+@media(max-width:540px){.client-profile-popover{padding:14px}.client-profile-field{grid-template-columns:82px minmax(0,1fr) 28px;gap:7px}}
 @media(max-width:1050px){.orders-screen{height:calc(100dvh - 110px)}}
 /* Ficha em página de trabalho, alinhada à navegação compartilhada. */
 .detail-backdrop{position:fixed;inset:72px 0 0 216px;z-index:19;display:block;padding:0;background:var(--ui-bg);backdrop-filter:none;overflow:hidden}

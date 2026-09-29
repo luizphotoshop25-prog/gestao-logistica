@@ -204,6 +204,11 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
         return sendJson(response, 200, { ok: true, rows }, responseOrigin);
       }
       if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, responseOrigin);
+      const clientProfileMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/client-profile$/);
+      if (clientProfileMatch && request.method === "GET") {
+        const result = database.getOrderClientProfile(decodeURIComponent(clientProfileMatch[1]));
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
       const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
       if (match && request.method === "GET") {
         const result = database.getOrder(decodeURIComponent(match[1]));
