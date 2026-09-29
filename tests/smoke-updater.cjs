@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { createUpdaterController, readApprovedGitHubFeed } = require("../electron/updater.cjs");
+const { AppUpdater } = require("electron-updater/out/AppUpdater");
 
 class FakeUpdater extends EventEmitter {
   checks = 0;
@@ -17,6 +18,10 @@ class FakeUpdater extends EventEmitter {
 }
 
 async function main() {
+  const semverUpdater = new AppUpdater(null, { version: "0.1.5" });
+  assert.equal(await semverUpdater.isUpdateAvailable({ version: "0.1.6" }), true, "installed v0.1.5 must detect v0.1.6");
+  assert.equal(await semverUpdater.isUpdateAvailable({ version: "0.1.5" }), false, "an identical build version must not be offered as an update");
+
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-updater-"));
   try {
     const resources = path.join(root, "resources");
@@ -83,7 +88,7 @@ async function main() {
     assert.equal((await failed.download()).ok, false);
     assert.deepEqual(failed.getState(), { status: "error", message: "Não foi possível baixar a atualização. O sistema continua disponível." });
     assert.equal(failed.install().ok, false);
-    console.log("Auto-update: modo dev, check silencioso, disponível, erro, progresso, download e reinício explícito aprovados.");
+    console.log("Auto-update: SemVer 0.1.5→0.1.6, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
   } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
