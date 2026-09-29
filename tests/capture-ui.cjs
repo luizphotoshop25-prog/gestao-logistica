@@ -45,7 +45,8 @@ database.initialize = (electronApp) => {
   const employee = database.createUser({ nome: "Carlos Teste", usuario: "carlos-visual", role: "employee", senhaHash: "fixture-sintetico" });
   if (!coordinator.ok || !employee.ok) throw new Error("Não foi possível preparar usuários sintéticos para a captura de Solicitações.");
   const digitalOrders = digitalSessions.map((sessao) => database.listOrders({ search: sessao })[0]);
-  const digital = database.createDigitalShipment({ numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: digitalOrders.filter((_order, index) => index !== 2).map((order) => order.id), actorUserId: coordinator.user.id, actorRole: "coordinator" });
+  const includedDigitalOrders = digitalOrders.filter((_order, index) => index !== 2);
+  const digital = database.createDigitalShipment({ numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: includedDigitalOrders.map((order) => order.id), itensDigital: 32, quantidadesEnviadas: { [includedDigitalOrders[0].id]: 20, [includedDigitalOrders[1].id]: 8, [includedDigitalOrders[2].id]: 4 }, actorUserId: coordinator.user.id, actorRole: "coordinator" });
   if (!digital.ok) throw new Error(`Não foi possível preparar o fixture de Enviados Digital: ${digital.message || "resultado inesperado"}.`);
   const now = Date.now();
   const createRequest = (descricao, prazo, sessao = "M99999") => database.createSolicitation({ descricao, observacao: "Fixture visual sintética para validar a hierarquia dos detalhes.", sessao_codigo: sessao, responsavel_usuario_id: employee.user.id, criado_por_usuario_id: coordinator.user.id, criado_por_nome: coordinator.user.nome, prazo_em: prazo });

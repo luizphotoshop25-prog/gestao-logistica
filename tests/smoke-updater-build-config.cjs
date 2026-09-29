@@ -6,7 +6,7 @@ const path = require("node:path");
 const project = path.join(__dirname, "..");
 function loadConfig(overrides = {}) {
   const env = { ...process.env, GESTAO_UPDATE_GITHUB_OWNER: "", GESTAO_UPDATE_GITHUB_REPO: "", ...overrides };
-  return spawnSync(process.execPath, ["-e", "const c=require('./electron-builder.config.cjs'); const p=require('./package.json'); console.log(JSON.stringify({publish:c.publish, appId:c.appId, productName:c.productName, target:c.win.target, nsis:c.nsis, extraResources:c.extraResources, version:p.version}));"], {
+  return spawnSync(process.execPath, ["-e", "const c=require('./electron-builder.config.cjs'); const p=require('./package.json'); console.log(JSON.stringify({publish:c.publish, appId:c.appId, productName:c.productName, target:c.win.target, nsis:c.nsis, files:p.build.files, extraResources:c.extraResources, version:p.version}));"], {
     cwd: project, env, encoding: "utf8",
   });
 }
@@ -29,7 +29,8 @@ assert.deepEqual({
   packElevateHelper: defaults.nsis.packElevateHelper,
   deleteAppDataOnUninstall: defaults.nsis.deleteAppDataOnUninstall,
 }, { include: "build/installer.nsh", oneClick: true, perMachine: false, runAfterFinish: true, packElevateHelper: true, deleteAppDataOnUninstall: false }, "installer must remain per-user, one-click, and preserve app data");
-assert.equal(defaults.version, "0.1.11");
+assert.equal(defaults.version, "0.1.12");
+assert.ok(defaults.files.includes("electron/digital-quantities-migration.cjs"), "the packaged app must include the runtime SQLite migration module");
 const installerInit = fs.readFileSync(path.join(project, "build/installer.nsh"), "utf8");
 assert.match(installerInit, /\$\{if\}\s+\$\{isUpdated\}[\s\S]*SetSilent silent/, "legacy auto-update launches must become silent before NSIS pages");
 const overridden = loadConfig({ GESTAO_UPDATE_GITHUB_OWNER: "example-owner", GESTAO_UPDATE_GITHUB_REPO: "another-repo" });

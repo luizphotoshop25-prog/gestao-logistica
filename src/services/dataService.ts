@@ -163,7 +163,7 @@ export function createHttpDataService(apiUrl: string): DataService {
     getDigitalShipmentsForOrder: (orderId) => request(`/api/digital-shipments/orders/${encodeURIComponent(orderId)}`),
     resolveDigitalShipmentSessions: (input) => request("/api/digital-shipments/resolve-sessions", { method: "POST", body: JSON.stringify(input) }),
     createDigitalShipment: (input) => request("/api/digital-shipments", { method: "POST", body: JSON.stringify(input) }),
-    updateDigitalShipment: (input) => request(`/api/digital-shipments/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revision: input.revision, numeroPedidoDigital: input.numeroPedidoDigital, dataEnvio: input.dataEnvio, pedidoIds: input.pedidoIds, confirmReenvio: input.confirmReenvio }) }),
+    updateDigitalShipment: (input) => request(`/api/digital-shipments/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify(input) }),
   };
 }
 

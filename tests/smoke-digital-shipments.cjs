@@ -6,6 +6,7 @@ const vm = require("node:vm");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
 const database = require("../electron/database.cjs");
+const { applyDigitalQuantitiesMigration } = require("../electron/digital-quantities-migration.cjs");
 const { startApiServer, createPasswordHash } = require("../server/api-server.cjs");
 
 const row = (session, photos, name = `Cliente Exemplo ${session}`) => ({
@@ -33,6 +34,9 @@ async function main() {
       assert.ok(migrated.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table), `migration creates ${table}`);
     }
     assert.equal(migrated.prepare("PRAGMA foreign_key_check").all().length, 0);
+    assert.ok(migrated.prepare("PRAGMA table_info(digital_envios)").all().some((column) => column.name === "itens_digital"));
+    assert.ok(migrated.prepare("PRAGMA table_info(digital_envio_itens)").all().some((column) => column.name === "quantidade_enviada"));
+    assert.equal(applyDigitalQuantitiesMigration(migrated), false, "versioned migration is idempotent");
     migrated.close();
     assert.ok(fs.readdirSync(path.join(legacyDirectory, "backups")).some((name) => name.startsWith("antes-enviados-digital-")), "legacy schema gets a safety backup");
     database.close();
@@ -48,7 +52,7 @@ async function main() {
     const employee = addUser("func-a", "employee");
     addUser("func-b", "employee");
     assert.equal(database.importSafeRows({ rows: [
-      row("M60001", 8, "Cliente Exemplo A"), row("M60002", 12), row("M60003", 10),
+      row("M60001", 120, "Cliente Exemplo A"), row("M60002", 12), row("M60003", 10),
       row("M60004", 7), row("M60005", 11), row("M60006", 9), row("M60007", 4),
       row("M60008", null), row("M60009", 2), row("M60010", 6),
     ] }).imported, 10);
@@ -58,17 +62,24 @@ async function main() {
       return [session, orderId(session)];
     }));
 
-    const first = database.createDigitalShipment({ numeroPedidoDigital: " 900001 ", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60001, orderIds.M60001], actorUserId: coordinator.id, actorRole: "coordinator" });
+    const first = database.createDigitalShipment({ numeroPedidoDigital: " 900001 ", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60001, orderIds.M60001], itensDigital: 40, quantidadesEnviadas: { [orderIds.M60001]: 40 }, actorUserId: coordinator.id, actorRole: "coordinator" });
     assert.equal(first.ok, true, first.message);
     assert.equal(first.shipment.numero_pedido_digital, "900001", "number is trimmed while preserving string format");
     assert.equal(first.shipment.sessoes_quantidade, 1, "duplicate items in a payload are deduplicated");
-    assert.equal(first.shipment.fotos_quantidade_soma, 8);
+    assert.equal(first.shipment.itens_digital, 40);
+    assert.equal(first.shipment.items[0].quantidade_enviada, 40);
+    assert.equal(first.shipment.items[0].fotos_quantidade, 40, "legacy alias returns Digital quantity, not Management total");
+    assert.equal(database.getOrder(orderIds.M60001).order.fotos_quantidade, 120, "fixture has 120 photos in Gestão and 40 sent to Digital");
     assert.equal(first.shipment.items[0].cliente_nome, "Cliente Exemplo A");
+    const validationDb = new DatabaseSync(path.join(root, "api", "GestaoLogistica", "gestao-logistica.sqlite3"));
+    assert.throws(() => validationDb.prepare("UPDATE digital_envios SET itens_digital=-1 WHERE id=?").run(first.shipment.id), /CHECK constraint failed/);
+    assert.throws(() => validationDb.prepare("UPDATE digital_envio_itens SET quantidade_enviada=1.5 WHERE digital_envio_id=?").run(first.shipment.id), /CHECK constraint failed/);
+    validationDb.close();
 
     const batch = database.createDigitalShipment({ numeroPedidoDigital: "900002", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60002, orderIds.M60003, orderIds.M60004, orderIds.M60005, orderIds.M60006], actorUserId: coordinator.id, actorRole: "coordinator" });
     assert.equal(batch.ok, true, batch.message);
     assert.equal(batch.shipment.sessoes_quantidade, 5);
-    assert.equal(batch.shipment.fotos_quantidade_soma, 49);
+    assert.equal(batch.shipment.itens_digital, null, "unspecified Digital total stays unknown");
     const duplicateNumber = database.createDigitalShipment({ numeroPedidoDigital: " 900001 ", dataEnvio: "2026-09-30", pedidoIds: [orderIds.M60007], actorUserId: employee.id, actorRole: "employee" });
     assert.equal(duplicateNumber.error, "DUPLICATE_DIGITAL_ORDER");
     assert.equal(duplicateNumber.existingId, first.shipment.id);
@@ -99,8 +110,17 @@ async function main() {
 
     const nullable = database.createDigitalShipment({ numeroPedidoDigital: "900004", dataEnvio: "2026-09-28", pedidoIds: [orderIds.M60008], actorUserId: employee.id, actorRole: "employee" });
     assert.equal(nullable.ok, true, nullable.message);
-    assert.equal(nullable.shipment.fotos_quantidade_soma, 0);
+    assert.equal(nullable.shipment.fotos_quantidade_soma, null);
     assert.equal(nullable.shipment.fotos_quantidade_desconhecida, 1);
+    assert.equal(nullable.shipment.itens_digital, null);
+    assert.equal(nullable.shipment.items[0].quantidade_enviada, null);
+
+    const exact = database.createDigitalShipment({ numeroPedidoDigital: "900040", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60009], itensDigital: 12, quantidadesEnviadas: { [orderIds.M60009]: 12 }, actorUserId: coordinator.id, actorRole: "coordinator" });
+    assert.equal(exact.ok, true);
+    assert.equal(database.createDigitalShipment({ numeroPedidoDigital: "900041", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60009], itensDigital: 11, quantidadesEnviadas: { [orderIds.M60009]: 12 }, confirmReenvio: true, actorUserId: coordinator.id, actorRole: "coordinator" }).error, "DIGITAL_ITEMS_EXCEEDED");
+    assert.equal(database.getDigitalShipment(first.shipment.id).items[0].quantidade_enviada, 40, "regression: Digital count stays 40 despite the session's Gestão count");
+    const legacyEdit = database.updateDigitalShipment({ id: first.shipment.id, revision: 1, numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60001], actorUserId: coordinator.id, actorRole: "coordinator" });
+    assert.equal(legacyEdit.shipment.itens_digital, 40, "old client omission preserves Digital total");
 
     const forbidden = database.updateDigitalShipment({ id: first.shipment.id, revision: 1, numeroPedidoDigital: "900011", dataEnvio: "2026-10-01", pedidoIds: [orderIds.M60001], actorUserId: employee.id, actorRole: "employee" });
     assert.equal(forbidden.error, "FORBIDDEN");
@@ -162,10 +182,20 @@ async function main() {
     const unauthorized = await fetch(`${api.origin}/api/digital-shipments`, { headers: { Authorization: "Bearer invalid" } });
     assert.equal(unauthorized.status, 401);
     assert.ok(elapsed < 3000);
-    console.log(`Enviados Digital: migração/backup, criação 1/5, busca sessão/número/cliente, sessão vazia/inexistente, duplicatas/reenvios, fotos parciais, paginação/ordenação/período, roles, edição/auditoria/revisão, HTTP/DataService e busca em 1.202 envios aprovados (${elapsed.toFixed(1)}ms).`);
+    const httpDigital = await manager.createDigitalShipment({ numeroPedidoDigital: "900050", dataEnvio: "2026-10-02", pedidoIds: [orderIds.M60001], itensDigital: 5, quantidadesEnviadas: { [orderIds.M60001]: 5 }, confirmReenvio: true });
+    assert.equal(httpDigital.ok, true, httpDigital.message);
+    assert.equal((await manager.listDigitalShipments({ search: "900050" })).rows[0].itens_digital, 5, "HTTP list serializes the Digital order total");
+    assert.equal((await manager.getDigitalShipment(httpDigital.shipment.id)).shipment.items[0].quantidade_enviada, 5);
+    assert.equal((await manager.updateDigitalShipment({ id: httpDigital.shipment.id, revision: 1, numeroPedidoDigital: "900050", dataEnvio: "2026-10-02", pedidoIds: [orderIds.M60001], itensDigital: 4, quantidadesEnviadas: { [orderIds.M60001]: 5 } })).error, "DIGITAL_ITEMS_EXCEEDED");
+    const oldClientEdit = await manager.updateDigitalShipment({ id: first.shipment.id, revision: 2, numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: [orderIds.M60001] });
+    assert.equal(oldClientEdit.ok, true);
+    assert.equal(oldClientEdit.shipment.itens_digital, 40, "HTTP 0.1.11 omission preserves Digital total");
+    assert.equal(oldClientEdit.shipment.items[0].quantidade_enviada, 40, "HTTP 0.1.11 omission preserves session Digital quantity");
+    console.log(`Enviados Digital: migration, nullable counts, 40-vs-120 regression, validation, create/edit/audit/revision, permissions and HTTP/DataService (${elapsed.toFixed(1)}ms).`);
   } finally {
     if (api) await api.close(); else database.close();
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+    catch (error) { if (error.code !== "EPERM") throw error; }
   }
 }
 

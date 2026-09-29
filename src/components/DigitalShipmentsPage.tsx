@@ -12,7 +12,7 @@ const localDate = () => {
   const value = new Date();
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 };
-const photoLabel = (known: number, missing: number) => missing ? (known ? `${known}+ fotos · parcial` : "Quantidade parcial") : `${known} fotos`;
+const digitalItemsLabel = (quantity: number | null | undefined) => quantity === null || quantity === undefined ? "—" : `${quantity} itens`;
 const canonicalSession = (value: string) => {
   const compact = value.trim().replace(/\s+/g, "");
   if (!/^M?\d+$/i.test(compact)) return null;
@@ -110,11 +110,11 @@ export function DigitalShipmentsPage({ currentUser, onOpenOrder }: { currentUser
 
       <div className="digital-list-heading"><div><h2>{search ? "Resultados" : "Envios recentes"}</h2><span>{loading ? "Consultando…" : `${busyCount} ${busyCount === 1 ? "envio" : "envios"}`}</span></div><button type="button" className="ui-button" onClick={() => void load()} disabled={loading}>Atualizar</button></div>
       {loading && !result ? <ViewState kind="loading" title="Carregando envios" /> : !loading && !busyCount ? <ViewState kind="empty" title={search ? "Nenhum envio encontrado" : "Nenhum envio registrado"} description={search ? "Revise a sessão, o número do pedido Digital ou o nome do cliente." : "Os registros feitos após o envio para a Digital Fotos aparecerão aqui."} /> : <>
-        <div className="digital-table-wrap"><table className="digital-table"><caption className="sr-only">Envios registrados para a Digital Fotos</caption><thead><tr><th>Pedido Digital</th><th>Data</th><th>Sessões</th><th>Fotos</th><th>Registrado por</th><th>Ações</th></tr></thead><tbody>
+        <div className="digital-table-wrap"><table className="digital-table"><caption className="sr-only">Envios registrados para a Digital Fotos</caption><thead><tr><th>Pedido Digital</th><th>Data</th><th>Sessões</th><th>Itens</th><th>Registrado por</th><th>Ações</th></tr></thead><tbody>
           {result?.rows.map((shipment) => <tr key={shipment.id}>
             <td><button type="button" className="digital-number-link" onClick={() => void openShipment(shipment.id)}>{shipment.numero_pedido_digital}</button></td>
             <td>{formatDate(shipment.data_envio)}</td><td>{shipment.sessoes_quantidade}</td>
-            <td>{photoLabel(shipment.fotos_quantidade_soma, shipment.fotos_quantidade_desconhecida)}</td>
+            <td>{digitalItemsLabel(shipment.itens_digital)}</td>
             <td><span className="digital-registrar"><UserRound size={14} />{shipment.registrado_por}</span></td>
             <td><button type="button" className="ui-button digital-view-button" onClick={() => void openShipment(shipment.id)}>Consultar</button></td>
           </tr>)}
@@ -135,9 +135,10 @@ function DigitalShipmentDetail({ shipment, currentUser, onClose, onEdit, onOpenO
   return <div className="digital-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="digital-detail-modal" role="dialog" aria-modal="true" aria-labelledby="digital-detail-title">
       <header><div><span className="section-kicker">DIGITAL FOTOS</span><h2 id="digital-detail-title">Pedido Digital {shipment.numero_pedido_digital}</h2><p><CalendarDays size={15} />{formatDate(shipment.data_envio)}<span>·</span><UserRound size={15} />Registrado por {shipment.registrado_por}</p></div><button type="button" className="icon-button" aria-label="Fechar detalhe" onClick={onClose}><X size={20} /></button></header>
-      <div className="digital-detail-summary"><span><Images size={16} />{shipment.sessoes_quantidade} sessões</span><span>{photoLabel(shipment.fotos_quantidade_soma, shipment.fotos_quantidade_desconhecida)}</span><span>Revisão {shipment.revision}</span></div>
+      <div className="digital-detail-summary"><span><Images size={16} />{shipment.sessoes_quantidade} sessões</span><span>{digitalItemsLabel(shipment.itens_digital)}</span><span>Revisão {shipment.revision}</span></div>
       <h3>Sessões incluídas</h3>
-      <div className="digital-items-table-wrap"><table className="digital-items-table"><thead><tr><th>Sessão</th><th>Cliente</th><th>Fotos</th><th>Ação</th></tr></thead><tbody>{shipment.items.map((item) => <tr key={item.pedido_id}><td><strong>{item.sessao}</strong></td><td>{item.cliente_nome || "Cliente não identificado"}</td><td>{item.fotos_quantidade === null ? "Não informado" : item.fotos_quantidade}</td><td><button type="button" className="ui-button digital-view-button" onClick={() => { onClose(); onOpenOrder(item.pedido_id); }}>Consultar</button></td></tr>)}</tbody></table></div>
+      {shipment.itens_digital !== null && shipment.items.every((item) => item.quantidade_enviada !== null) && shipment.itens_digital > shipment.items.reduce((sum, item) => sum + (item.quantidade_enviada ?? 0), 0) && <p className="digital-unassigned-items">{shipment.itens_digital - shipment.items.reduce((sum, item) => sum + (item.quantidade_enviada ?? 0), 0)} itens sem sessão identificada</p>}
+      <div className="digital-items-table-wrap"><table className="digital-items-table"><thead><tr><th>Sessão</th><th>Cliente</th><th>Qtd. enviada</th><th>Ação</th></tr></thead><tbody>{shipment.items.map((item) => <tr key={item.pedido_id}><td><strong>{item.sessao}</strong></td><td>{item.cliente_nome || "Cliente não identificado"}</td><td>{item.quantidade_enviada === null ? "—" : item.quantidade_enviada}</td><td><button type="button" className="ui-button digital-view-button" onClick={() => { onClose(); onOpenOrder(item.pedido_id); }}>Consultar</button></td></tr>)}</tbody></table></div>
       <section className="digital-audit"><h3><History size={16} />Histórico de alterações</h3><div>{shipment.events.map((event) => <article key={event.id}><strong>{event.descricao}</strong><small>{new Date(event.criado_em).toLocaleString("pt-BR")} · {event.usuario_nome}</small></article>)}</div></section>
       <footer><button type="button" className="ui-button" onClick={onClose}>Fechar</button>{mayEdit && <button type="button" className="ui-button ui-button-primary" onClick={onEdit}><Pencil size={16} /> Editar registro</button>}</footer>
     </section>
@@ -149,6 +150,8 @@ function DigitalShipmentForm({ shipment, onClose, onSaved, onDuplicate }: {
 }) {
   const [number, setNumber] = useState(shipment?.numero_pedido_digital || "");
   const [date, setDate] = useState(shipment?.data_envio || localDate());
+  const [digitalTotal, setDigitalTotal] = useState(shipment?.itens_digital == null ? "" : String(shipment.itens_digital));
+  const [sessionQuantities, setSessionQuantities] = useState<Record<string, string>>(() => Object.fromEntries(shipment?.items.map((item) => [item.pedido_id, item.quantidade_enviada == null ? "" : String(item.quantidade_enviada)]) || []));
   const [selected, setSelected] = useState<Candidate[]>(() => shipment?.items.map((item) => ({ ...item, id: item.pedido_id, priorShipments: [] })) || []);
   const [invalid, setInvalid] = useState<string[]>([]);
   const [singleSession, setSingleSession] = useState("");
@@ -158,8 +161,9 @@ function DigitalShipmentForm({ shipment, onClose, onSaved, onDuplicate }: {
   const [error, setError] = useState("");
   const singleRef = useRef<HTMLInputElement>(null);
   const selectedIds = useMemo(() => new Set(selected.map((item) => item.id)), [selected]);
-  const selectedPhotos = selected.reduce((total, item) => total + (item.fotos_quantidade ?? 0), 0);
-  const unknownPhotos = selected.filter((item) => item.fotos_quantidade === null).length;
+  const parsedSessionQuantities = Object.fromEntries(selected.map((item) => [item.id, sessionQuantities[item.id] === "" || sessionQuantities[item.id] === undefined ? null : Number(sessionQuantities[item.id])]));
+  const knownSessionSum = Object.values(parsedSessionQuantities).every((value) => value !== null) ? Object.values(parsedSessionQuantities).reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
+  const exceedsTotal = digitalTotal !== "" && knownSessionSum !== null && knownSessionSum > Number(digitalTotal);
 
   const resolveAndAdd = async (tokens: string[]) => {
     const normalized = tokens.map(canonicalSession);
@@ -187,7 +191,10 @@ function DigitalShipmentForm({ shipment, onClose, onSaved, onDuplicate }: {
     }
     setSaving(true); setError("");
     try {
-      const values = { numeroPedidoDigital: number, dataEnvio: date, pedidoIds: selected.map((item) => item.id), ...(confirmReenvio ? { confirmReenvio: true } : {}) };
+      if (digitalTotal !== "" && (!Number.isSafeInteger(Number(digitalTotal)) || Number(digitalTotal) < 0)) throw new Error("Informe um total inteiro igual ou maior que zero.");
+      if (selected.some((item) => sessionQuantities[item.id] !== undefined && sessionQuantities[item.id] !== "" && (!Number.isSafeInteger(Number(sessionQuantities[item.id])) || Number(sessionQuantities[item.id]) < 0))) throw new Error("Informe quantidades inteiras iguais ou maiores que zero.");
+      if (exceedsTotal) throw new Error("A soma das quantidades das sessões não pode ser maior que o total de itens do pedido Digital.");
+      const values = { numeroPedidoDigital: number, dataEnvio: date, pedidoIds: selected.map((item) => item.id), itensDigital: digitalTotal === "" ? null : Number(digitalTotal), quantidadesEnviadas: parsedSessionQuantities, ...(confirmReenvio ? { confirmReenvio: true } : {}) };
       const response = shipment
         ? await dataService.updateDigitalShipment({ id: shipment.id, revision: shipment.revision, ...values })
         : await dataService.createDigitalShipment(values);
@@ -211,16 +218,17 @@ function DigitalShipmentForm({ shipment, onClose, onSaved, onDuplicate }: {
   return <div className="digital-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
     <section className="digital-form-modal" role="dialog" aria-modal="true" aria-labelledby="digital-form-title">
       <header><div><span className="section-kicker">REGISTRO OPERACIONAL</span><h2 id="digital-form-title">{shipment ? `Editar pedido Digital ${shipment.numero_pedido_digital}` : "Registrar envio"}</h2><p>Registre as sessões incluídas após o envio para a Digital Fotos.</p></div><button type="button" className="icon-button" aria-label="Fechar formulário" onClick={onClose} disabled={saving}><X size={20} /></button></header>
-      <div className="digital-form-fields"><label>Número do pedido Digital<input autoFocus value={number} maxLength={80} onChange={(event) => setNumber(event.target.value)} placeholder="Ex.: 118596" /></label><label>Data do envio<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label></div>
+      <div className="digital-form-fields"><label>Número do pedido Digital<input autoFocus value={number} maxLength={80} onChange={(event) => setNumber(event.target.value)} placeholder="Ex.: 118596" /></label><label>Data do envio<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><label>Itens na Digital<input type="number" min="0" step="1" value={digitalTotal} onChange={(event) => setDigitalTotal(event.target.value)} placeholder="Opcional" /><small>Quantidade total de itens exibida no pedido da Digital Fotos.</small></label></div>
       <section className="digital-session-entry"><div><h3>Sessões</h3><p>Adicione uma por vez ou cole uma lista de códigos.</p></div>
         <form className="digital-add-one" onSubmit={(event) => { event.preventDefault(); void resolveAndAdd([singleSession]); }}><input ref={singleRef} value={singleSession} onChange={(event) => setSingleSession(event.target.value)} placeholder="Adicionar sessão..." aria-label="Adicionar sessão" /><button type="submit" className="ui-button" disabled={!singleSession.trim() || loadingSessions}><Plus size={15} /> Adicionar</button></form>
         <div className="digital-bulk-entry"><textarea value={bulkSessions} onChange={(event) => setBulkSessions(event.target.value)} rows={3} placeholder={"Cole sessões separadas por linha, vírgula ou ponto e vírgula\nM60001\nM60002"} aria-label="Colar várias sessões" /><button type="button" className="ui-button" disabled={!bulkSessions.trim() || loadingSessions} onClick={() => void resolveAndAdd(bulkSessions.split(/[\s,;]+/).filter(Boolean))}>{loadingSessions ? "Localizando…" : "Adicionar lista"}</button></div>
       </section>
-      <div className="digital-selection-summary"><strong>{selected.length} {selected.length === 1 ? "sessão selecionada" : "sessões selecionadas"}</strong><span>{photoLabel(selectedPhotos, unknownPhotos)}</span></div>
+      <div className="digital-selection-summary"><strong>{selected.length} {selected.length === 1 ? "sessão selecionada" : "sessões selecionadas"}</strong><span>{!selected.length ? "Quantidades da Digital são opcionais." : knownSessionSum === null ? "Informe as quantidades para conferir o total." : `${knownSessionSum} itens informados nas sessões`}</span></div>
       {invalid.length > 0 && <div className="digital-invalid-list" role="alert"><AlertTriangle size={16} /><div><strong>Corrija estas sessões para continuar</strong>{invalid.map((session) => <div key={session}><span>{session}</span><small>{canonicalSession(session) ? "Não encontrada no Gestão Logística" : "Formato inválido"}</small><button type="button" aria-label={`Remover ${session}`} onClick={() => setInvalid((old) => old.filter((value) => value !== session))}><X size={14} /></button></div>)}</div></div>}
-      <div className="digital-selected-list">{selected.map((item) => { const prior = item.priorShipments.filter((entry) => entry.id !== shipment?.id); return <article key={item.id} className={prior.length ? "previously-sent" : ""}><div><strong>{item.sessao}</strong><span>{item.cliente_nome || "Cliente não identificado"}</span><small>{item.fotos_quantidade === null ? "Fotos não informadas" : `${item.fotos_quantidade} fotos`}</small>{prior.map((entry) => <em key={entry.id}>Já enviado em {formatDate(entry.data_envio)} · Pedido Digital {entry.numero_pedido_digital}</em>)}</div><button type="button" aria-label={`Remover ${item.sessao}`} onClick={() => setSelected((old) => old.filter((value) => value.id !== item.id))}><X size={16} /></button></article>; })}</div>
+      <div className="digital-selected-list">{selected.map((item) => { const prior = item.priorShipments.filter((entry) => entry.id !== shipment?.id); return <article key={item.id} className={prior.length ? "previously-sent" : ""}><div><strong>{item.sessao}</strong><span>{item.cliente_nome || "Cliente não identificado"}</span><label>Qtd. enviada<input aria-label={`Quantidade enviada da sessão ${item.sessao}`} type="number" min="0" step="1" value={sessionQuantities[item.id] || ""} onChange={(event) => setSessionQuantities((old) => ({ ...old, [item.id]: event.target.value }))} placeholder="Opcional" /></label>{prior.map((entry) => <em key={entry.id}>Já enviado em {formatDate(entry.data_envio)} · Pedido Digital {entry.numero_pedido_digital}</em>)}</div><button type="button" aria-label={`Remover ${item.sessao}`} onClick={() => setSelected((old) => old.filter((value) => value.id !== item.id))}><X size={16} /></button></article>; })}</div>
+      {exceedsTotal && <p className="digital-form-error" role="alert">A soma das quantidades das sessões não pode ser maior que o total de itens do pedido Digital.</p>}
       {error && <p className="digital-form-error" role="alert">{error}</p>}
-      <footer><span><Clock3 size={14} />A alteração ficará registrada no histórico.</span><button type="button" className="ui-button" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="ui-button ui-button-primary" disabled={saving || loadingSessions || !number.trim() || !date || !selected.length || Boolean(invalid.length)} onClick={() => void submit()}>{saving ? "Salvando…" : shipment ? "Salvar alterações" : "Registrar envio"}</button></footer>
+      <footer><span><Clock3 size={14} />A alteração ficará registrada no histórico.</span><button type="button" className="ui-button" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="ui-button ui-button-primary" disabled={saving || loadingSessions || !number.trim() || !date || !selected.length || Boolean(invalid.length) || exceedsTotal} onClick={() => void submit()}>{saving ? "Salvando…" : shipment ? "Salvar alterações" : "Registrar envio"}</button></footer>
     </section>
   </div>;
 }

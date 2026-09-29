@@ -28,8 +28,8 @@ async function main() {
   const service = context.exports.dataService;
   const options = { search: "M60001", page: 2, pageSize: 20 };
   const input = { sessions: ["M60001", "M60002"] };
-  const create = { numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: ["order-a"] };
-  const update = { id: "digital-a", revision: 2, numeroPedidoDigital: "900002", dataEnvio: "2026-09-30", pedidoIds: ["order-a"] };
+  const create = { numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: ["order-a"], itensDigital: 40, quantidadesEnviadas: { "order-a": 40 } };
+  const update = { id: "digital-a", revision: 2, numeroPedidoDigital: "900002", dataEnvio: "2026-09-30", pedidoIds: ["order-a"], itensDigital: null, quantidadesEnviadas: { "order-a": null } };
   await service.listDigitalShipments(options);
   await service.getDigitalShipment("digital-a");
   await service.getDigitalShipmentsForOrder("order-a");

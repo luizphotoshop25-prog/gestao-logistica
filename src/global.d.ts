@@ -119,9 +119,9 @@ type SolicitationResult = { ok: boolean; error?: string; revisionAtual?: number;
 type DigitalShipmentSummary = {
   id: string; numero_pedido_digital: string; data_envio: string; criado_por_usuario_id: string | null;
   criado_em: string; atualizado_em: string; revision: number; registrado_por: string;
-  sessoes_quantidade: number; fotos_quantidade_soma: number; fotos_quantidade_desconhecida: number;
+  sessoes_quantidade: number; itens_digital: number | null; fotos_quantidade_soma: number | null; fotos_quantidade_desconhecida: number;
 };
-type DigitalShipmentItem = { pedido_id: string; sessao: string; cliente_nome: string | null; fotos_quantidade: number | null };
+type DigitalShipmentItem = { pedido_id: string; sessao: string; cliente_nome: string | null; quantidade_enviada: number | null; fotos_quantidade: number | null };
 type DigitalShipmentEvent = { id: string; acao: string; descricao: string; criado_em: string; usuario_id: string | null; usuario_nome: string };
 type DigitalShipment = DigitalShipmentSummary & { items: DigitalShipmentItem[]; events: DigitalShipmentEvent[] };
 type DigitalShipmentListResult = {
@@ -247,8 +247,8 @@ interface Window {
     getDigitalShipment(id: string): Promise<{ ok: boolean; error?: string; message?: string; shipment?: DigitalShipment }>;
     getDigitalShipmentsForOrder(orderId: string): Promise<{ ok: boolean; error?: string; message?: string; rows?: DigitalShipmentSummary[] }>;
     resolveDigitalShipmentSessions(input: { sessions: string[] }): Promise<DigitalShipmentSessionsResult>;
-    createDigitalShipment(input: { numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
-    updateDigitalShipment(input: { id: string; revision: number; numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
+    createDigitalShipment(input: { numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; itensDigital?: number | null; quantidadesEnviadas?: Record<string, number | null>; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
+    updateDigitalShipment(input: { id: string; revision: number; numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; itensDigital?: number | null; quantidadesEnviadas?: Record<string, number | null>; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
     getUpdaterState(): Promise<{ ok: boolean; enabled: boolean; state: AppUpdateState }>;
     downloadAppUpdate(): Promise<{ ok: boolean }>;
     installAppUpdate(): Promise<{ ok: boolean }>;

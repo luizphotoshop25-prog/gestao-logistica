@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { applyDigitalQuantitiesMigration } = require("./digital-quantities-migration.cjs");
 const { DatabaseSync } = require("node:sqlite");
 
 let db;
@@ -233,6 +234,7 @@ function initializeDataDirectory(directory) {
   ensureSelectionEmailColumns();
   ensureEventColumns();
   ensureDigitalShipmentSchema();
+  applyDigitalQuantitiesMigration(db);
   initializeTreatmentAssignment();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
@@ -685,11 +687,11 @@ function normalizeDigitalSession(value) {
   return `M${session.replace(/^M/i, "")}`.toUpperCase();
 }
 
-const digitalShipmentSummarySql = `SELECT s.id,s.numero_pedido_digital,s.data_envio,s.criado_por_usuario_id,
+const digitalShipmentSummarySql = `SELECT s.id,s.numero_pedido_digital,s.data_envio,s.itens_digital,s.criado_por_usuario_id,
     s.criado_em,s.atualizado_em,s.revision,coalesce(u.nome,'Usuário local') registrado_por,
     count(i.id) sessoes_quantidade,
-    coalesce(sum(p.fotos_quantidade),0) fotos_quantidade_soma,
-    sum(CASE WHEN i.id IS NOT NULL AND p.fotos_quantidade IS NULL THEN 1 ELSE 0 END) fotos_quantidade_desconhecida
+    s.itens_digital fotos_quantidade_soma,
+    CASE WHEN s.itens_digital IS NULL THEN 1 ELSE 0 END fotos_quantidade_desconhecida
   FROM digital_envios s LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id
   LEFT JOIN digital_envio_itens i ON i.digital_envio_id=s.id
   LEFT JOIN pedidos p ON p.id=i.pedido_id`;
@@ -698,7 +700,7 @@ function getDigitalShipment(idValue) {
   const shipmentId = clean(idValue);
   const shipment = db.prepare(`${digitalShipmentSummarySql} WHERE s.id=? GROUP BY s.id`).get(shipmentId);
   if (!shipment) return null;
-  const items = db.prepare(`SELECT p.id pedido_id,p.sessao,c.nome cliente_nome,p.fotos_quantidade
+  const items = db.prepare(`SELECT p.id pedido_id,p.sessao,c.nome cliente_nome,i.quantidade_enviada,i.quantidade_enviada fotos_quantidade
     FROM digital_envio_itens i JOIN pedidos p ON p.id=i.pedido_id
     LEFT JOIN clientes c ON c.id=p.cliente_id
     WHERE i.digital_envio_id=? ORDER BY p.sessao COLLATE NOCASE`).all(shipmentId);
@@ -707,7 +709,6 @@ function getDigitalShipment(idValue) {
     FROM digital_envio_eventos e LEFT JOIN usuarios u ON u.id=e.usuario_id
     WHERE e.digital_envio_id=? ORDER BY e.criado_em DESC,e.id DESC`).all(shipmentId);
   return { ...shipment, sessoes_quantidade: Number(shipment.sessoes_quantidade || 0),
-    fotos_quantidade_soma: Number(shipment.fotos_quantidade_soma || 0),
     fotos_quantidade_desconhecida: Number(shipment.fotos_quantidade_desconhecida || 0), items, events };
 }
 
@@ -718,7 +719,6 @@ function getDigitalShipmentsForOrder(orderIdValue) {
     WHERE EXISTS (SELECT 1 FROM digital_envio_itens ix WHERE ix.digital_envio_id=s.id AND ix.pedido_id=?)
     GROUP BY s.id ORDER BY s.data_envio,s.criado_em`).all(orderId);
   return { ok: true, rows: rows.map((row) => ({ ...row, sessoes_quantidade: Number(row.sessoes_quantidade || 0),
-    fotos_quantidade_soma: Number(row.fotos_quantidade_soma || 0),
     fotos_quantidade_desconhecida: Number(row.fotos_quantidade_desconhecida || 0) })) };
 }
 
@@ -765,7 +765,6 @@ function listDigitalShipments(options = {}) {
   const rows = db.prepare(`${digitalShipmentSummarySql} ${clause} GROUP BY s.id ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...params, pageSize, (page - 1) * pageSize)
     .map((row) => ({ ...row, sessoes_quantidade: Number(row.sessoes_quantidade || 0),
-      fotos_quantidade_soma: Number(row.fotos_quantidade_soma || 0),
       fotos_quantidade_desconhecida: Number(row.fotos_quantidade_desconhecida || 0) }));
 
   let sessionResult = null;
@@ -812,9 +811,35 @@ function normalizedShipmentInput(input) {
   if (!number || number.length > 80) return { error: "INVALID_NUMBER", message: "Informe um número de pedido Digital válido (até 80 caracteres)." };
   if (!validIsoDate(date)) return { error: "INVALID_DATE", message: "Informe uma data de envio válida." };
   if (!pedidoIds.length || pedidoIds.length > 500) return { error: "INVALID_SESSIONS", message: "Selecione de 1 a 500 sessões existentes." };
+  const hasDigitalTotal = Object.hasOwn(input || {}, "itensDigital");
+  const digitalTotal = hasDigitalTotal ? normalizeDigitalQuantity(input.itensDigital, "INVALID_DIGITAL_TOTAL") : undefined;
+  if (digitalTotal?.error) return digitalTotal;
+  const hasSessionQuantities = Object.hasOwn(input || {}, "quantidadesEnviadas");
+  const quantities = new Map();
+  if (hasSessionQuantities) {
+    if (!input.quantidadesEnviadas || typeof input.quantidadesEnviadas !== "object" || Array.isArray(input.quantidadesEnviadas)) return { error: "INVALID_SESSION_QUANTITY", message: "Uma ou mais quantidades por sessão são inválidas." };
+    for (const [orderId, value] of Object.entries(input.quantidadesEnviadas)) {
+      if (!pedidoIds.includes(orderId)) continue;
+      const quantity = normalizeDigitalQuantity(value, "INVALID_SESSION_QUANTITY");
+      if (quantity?.error) return { error: quantity.error, message: "Uma ou mais quantidades por sessão são inválidas." };
+      quantities.set(orderId, quantity);
+    }
+  }
   const found = db.prepare(`SELECT id,sessao,fotos_quantidade FROM pedidos WHERE id IN (${pedidoIds.map(() => "?").join(",")})`).all(...pedidoIds);
   if (found.length !== pedidoIds.length) return { error: "ORDER_NOT_FOUND", message: "Uma ou mais sessões não existem mais no Gestão Logística." };
-  return { number, date, pedidoIds, orders: found };
+  return { number, date, pedidoIds, orders: found, hasDigitalTotal, digitalTotal, hasSessionQuantities, quantities };
+}
+
+function normalizeDigitalQuantity(value, error) {
+  if (value === null || value === "") return null;
+  if (!Number.isSafeInteger(value) || value < 0) return { error, message: "A quantidade deve ser um número inteiro igual ou maior que zero." };
+  return value;
+}
+
+const DIGITAL_TOTAL_EXCEEDED = "A soma das quantidades das sessões não pode ser maior que o total de itens do pedido Digital.";
+function digitalQuantitiesExceedTotal(total, quantities) {
+  return total !== null && [...quantities.values()].every((value) => value !== null)
+    && [...quantities.values()].reduce((sum, value) => sum + value, 0) > total;
 }
 
 function priorDigitalShipments(pedidoIds, exceptShipmentId = "") {
@@ -842,6 +867,9 @@ function createDigitalShipment(input) {
   const timestamp = now();
   db.exec("BEGIN IMMEDIATE");
   try {
+    if (values.hasSessionQuantities && digitalQuantitiesExceedTotal(values.digitalTotal, values.quantities)) {
+      db.exec("ROLLBACK"); return { ok: false, error: "DIGITAL_ITEMS_EXCEEDED", message: DIGITAL_TOTAL_EXCEEDED };
+    }
     const duplicate = db.prepare("SELECT id FROM digital_envios WHERE numero_pedido_digital=? COLLATE NOCASE").get(values.number);
     if (duplicate) { db.exec("ROLLBACK"); return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", existingId: duplicate.id, message: "Este pedido da Digital já foi registrado." }; }
     const prior = priorDigitalShipments(values.pedidoIds);
@@ -851,12 +879,17 @@ function createDigitalShipment(input) {
         message: `${new Set(prior.map((row) => row.pedido_id)).size} das sessões selecionadas já possui envio registrado.` };
     }
     db.prepare(`INSERT INTO digital_envios
-      (id,numero_pedido_digital,data_envio,criado_por_usuario_id,criado_em,atualizado_em,revision)
-      VALUES (?,?,?,?,?,?,1)`).run(shipmentId, values.number, values.date, actor.user?.id || null, timestamp, timestamp);
-    const add = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em) VALUES (?,?,?,?)");
-    for (const orderId of values.pedidoIds) add.run(id(), shipmentId, orderId, timestamp);
+      (id,numero_pedido_digital,data_envio,criado_por_usuario_id,criado_em,atualizado_em,revision,itens_digital)
+      VALUES (?,?,?,?,?,?,1,?)`).run(shipmentId, values.number, values.date, actor.user?.id || null, timestamp, timestamp, values.hasDigitalTotal ? values.digitalTotal : null);
+    const add = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em,quantidade_enviada) VALUES (?,?,?,?,?)");
+    for (const orderId of values.pedidoIds) add.run(id(), shipmentId, orderId, timestamp, values.quantities.get(orderId) ?? null);
     const who = actor.user?.nome || "Usuário local";
-    insertDigitalShipmentEvent(shipmentId, actor.user?.id, "created", `${who} registrou o pedido Digital ${values.number} com ${values.pedidoIds.length} sessões.`);
+    const quantitiesDescription = values.pedidoIds.map((orderId) => {
+      const session = values.orders.find((order) => order.id === orderId)?.sessao || orderId;
+      const quantity = values.quantities.get(orderId);
+      return `${session}=${quantity == null ? "não informada" : quantity}`;
+    }).join(", ");
+    insertDigitalShipmentEvent(shipmentId, actor.user?.id, "created", `${who} registrou o pedido Digital ${values.number} com ${values.pedidoIds.length} sessões; total Digital ${values.hasDigitalTotal && values.digitalTotal !== null ? values.digitalTotal : "não informado"}; quantidades enviadas: ${quantitiesDescription}.`);
     db.exec("COMMIT");
     return { ok: true, shipment: getDigitalShipment(shipmentId) };
   } catch (error) {
@@ -886,6 +919,12 @@ function updateDigitalShipment(input) {
   const removed = existingIds.filter((orderId) => !nextSet.has(orderId));
   db.exec("BEGIN IMMEDIATE");
   try {
+    const nextTotal = values.hasDigitalTotal ? values.digitalTotal : current.itens_digital ?? null;
+    const currentQuantities = new Map(db.prepare("SELECT pedido_id,quantidade_enviada FROM digital_envio_itens WHERE digital_envio_id=?").all(shipmentId).map((item) => [item.pedido_id, item.quantidade_enviada]));
+    const nextQuantities = new Map(values.pedidoIds.map((orderId) => [orderId, values.hasSessionQuantities ? (values.quantities.has(orderId) ? values.quantities.get(orderId) : null) : (currentQuantities.get(orderId) ?? null)]));
+    if (digitalQuantitiesExceedTotal(nextTotal, nextQuantities)) {
+      db.exec("ROLLBACK"); return { ok: false, error: "DIGITAL_ITEMS_EXCEEDED", message: DIGITAL_TOTAL_EXCEEDED };
+    }
     const duplicate = db.prepare("SELECT id FROM digital_envios WHERE numero_pedido_digital=? COLLATE NOCASE AND id<>?").get(values.number, shipmentId);
     if (duplicate) { db.exec("ROLLBACK"); return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", existingId: duplicate.id, message: "Este pedido da Digital já foi registrado." }; }
     const prior = priorDigitalShipments(added, shipmentId);
@@ -895,18 +934,30 @@ function updateDigitalShipment(input) {
         message: `${new Set(prior.map((row) => row.pedido_id)).size} das sessões adicionadas já possui envio registrado.` };
     }
     const timestamp = now();
-    const update = db.prepare(`UPDATE digital_envios SET numero_pedido_digital=?,data_envio=?,atualizado_em=?,revision=revision+1
-      WHERE id=? AND revision=?`).run(values.number, values.date, timestamp, shipmentId, revision);
+    const update = db.prepare(`UPDATE digital_envios SET numero_pedido_digital=?,data_envio=?,itens_digital=?,atualizado_em=?,revision=revision+1
+      WHERE id=? AND revision=?`).run(values.number, values.date, nextTotal, timestamp, shipmentId, revision);
     if (update.changes !== 1) { db.exec("ROLLBACK"); return { ok: false, error: "REVISION_CONFLICT", message: "Este registro foi alterado por outra pessoa. Reabra o pedido Digital." }; }
     const oldNumber = current.numero_pedido_digital;
     const oldDate = current.data_envio;
     if (oldNumber !== values.number) insertDigitalShipmentEvent(shipmentId, actor.user?.id, "number_changed", `Número do pedido Digital alterado de ${oldNumber} para ${values.number}.`);
     if (oldDate !== values.date) insertDigitalShipmentEvent(shipmentId, actor.user?.id, "date_changed", `Data do envio alterada de ${oldDate} para ${values.date}.`);
-    const insert = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em) VALUES (?,?,?,?)");
+    if (current.itens_digital !== nextTotal) insertDigitalShipmentEvent(shipmentId, actor.user?.id, "digital_total_changed", `Total de itens Digital alterado de ${current.itens_digital ?? "não informado"} para ${nextTotal ?? "não informado"}.`);
+    const insert = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em,quantidade_enviada) VALUES (?,?,?,?,?)");
     for (const orderId of added) {
-      insert.run(id(), shipmentId, orderId, timestamp);
+      insert.run(id(), shipmentId, orderId, timestamp, nextQuantities.get(orderId) ?? null);
       const session = values.orders.find((order) => order.id === orderId)?.sessao || orderId;
-      insertDigitalShipmentEvent(shipmentId, actor.user?.id, "item_added", `Sessão ${session} adicionada ao pedido Digital ${values.number}.`);
+      const quantity = nextQuantities.get(orderId);
+      insertDigitalShipmentEvent(shipmentId, actor.user?.id, "item_added", `Sessão ${session} adicionada ao pedido Digital ${values.number}; quantidade enviada ${quantity == null ? "não informada" : quantity}.`);
+    }
+    const setQuantity = db.prepare("UPDATE digital_envio_itens SET quantidade_enviada=? WHERE digital_envio_id=? AND pedido_id=?");
+    for (const orderId of values.pedidoIds.filter((orderId) => existingSet.has(orderId))) {
+      const priorQuantity = currentQuantities.get(orderId) ?? null;
+      const nextQuantity = nextQuantities.get(orderId) ?? null;
+      if (priorQuantity !== nextQuantity) {
+        setQuantity.run(nextQuantity, shipmentId, orderId);
+        const session = values.orders.find((order) => order.id === orderId)?.sessao || orderId;
+        insertDigitalShipmentEvent(shipmentId, actor.user?.id, "session_quantity_changed", `Quantidade enviada da sessão ${session} alterada de ${priorQuantity ?? "não informada"} para ${nextQuantity ?? "não informada"}.`);
+      }
     }
     const remove = db.prepare("DELETE FROM digital_envio_itens WHERE digital_envio_id=? AND pedido_id=?");
     for (const orderId of removed) {
