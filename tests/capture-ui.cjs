@@ -141,6 +141,12 @@ app.whenReady().then(() => {
         if (!visible) throw new Error("Fixture ou preload ausente.");
         await capture(window, outputPath);
         if (httpTransport) {
+          await window.webContents.executeJavaScript("document.querySelector('.client-profile-trigger:not(:disabled)').click()");
+          await waitForSelector(window, ".client-profile-fields");
+          const profileLoaded = await window.webContents.executeJavaScript(`document.querySelector('.client-profile-popover').innerText.includes(${JSON.stringify(expectedClientName)})`);
+          if (!profileLoaded) throw new Error("Ficha rápida HTTP não exibiu o cliente do banco sintético.");
+          await capture(window, outputPath.replace(/\.png$/i, "-client-profile.png"));
+          await window.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
           await window.webContents.executeJavaScript("document.querySelector('.session-link').click()");
           await waitForSelector(window, ".order-preview .ui-button-primary");
           const remotePreviewPath = outputPath.replace(/\.png$/i, "-preview.png");

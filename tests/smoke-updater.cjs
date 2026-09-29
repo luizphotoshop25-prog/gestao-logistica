@@ -26,6 +26,8 @@ async function main() {
   assert.equal(await patchReleaseUpdater.isUpdateAvailable({ version: "0.1.6" }), false, "identical versions must never be offered as an update");
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-updater-"));
+  const profileFixUpdater = new AppUpdater(null, { version: "0.1.7" });
+  assert.equal(await profileFixUpdater.isUpdateAvailable({ version: "0.1.8" }), true, "installed v0.1.7 must detect the HTTP profile fix v0.1.8");
   try {
     const resources = path.join(root, "resources");
     fs.mkdirSync(resources);

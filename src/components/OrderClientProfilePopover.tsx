@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Clipboard, Copy, X } from "lucide-react";
+import { dataService } from "../services/dataService";
 
 export type ClientProfileTarget = { orderId: string; clientName: string; anchor: HTMLElement };
 
@@ -67,7 +68,7 @@ export function OrderClientProfilePopover({ target, cacheVersion, onClose }: Pro
     }
     setResult(null);
     setLoading(true);
-    void window.gestaoAPI.getOrderClientProfile(target.orderId)
+    void dataService.getOrderClientProfile(target.orderId)
       .then((response) => {
         if (!active) return;
         if (!response.ok) {

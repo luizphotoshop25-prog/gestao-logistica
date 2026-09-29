@@ -31,13 +31,15 @@ window.gestaoAPI = {
  getOrder:async(id)=> state==='preview-error' ? {ok:false,message:'Falha sintética'} : ({ok:true,order:{...orders.find(order=>order.id===id),prazo_maximo_em:'2026-11-17',selecao_finalizada_em:'2026-09-18',observacoes:'Observação sintética para revisão do preview.',codigo_rastreio:null},attachments:[],items:[],siwinObservations:[],selectionEmails:[],events:[]})
 };
 if(params.get('transport')==='http') {
+ const fixtureApi={...window.gestaoAPI};
+ window.gestaoAPI.getOrderClientProfile=async()=>{throw Error('IPC local indisponível no transporte HTTP.');};
  const fixtureFetch=window.fetch;
  window.fetch=async(url,options)=>{
   const route=new URL(String(url));
   if(!route.pathname.startsWith('/api/'))return fixtureFetch(url,options);
   let payload;
   if(route.pathname==='/api/orders')payload=await window.gestaoAPI.listOrders(Object.fromEntries(route.searchParams));
-  else if(route.pathname.startsWith('/api/orders/')&&route.pathname.endsWith('/client-profile'))payload=await window.gestaoAPI.getOrderClientProfile(decodeURIComponent(route.pathname.split('/').at(-2)));
+  else if(route.pathname.startsWith('/api/orders/')&&route.pathname.endsWith('/client-profile'))payload=await fixtureApi.getOrderClientProfile(decodeURIComponent(route.pathname.split('/').at(-2)));
   else if(route.pathname.startsWith('/api/orders/'))payload=await window.gestaoAPI.getOrder(decodeURIComponent(route.pathname.split('/').pop()));
   else if(route.pathname==='/api/dashboard')payload=await window.gestaoAPI.dashboard();
   else if(route.pathname==='/api/solicitations')payload=await window.gestaoAPI.listSolicitations();
