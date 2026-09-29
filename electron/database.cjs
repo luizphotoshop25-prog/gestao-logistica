@@ -17,6 +17,10 @@ const normalizedText = (value) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/\s+/g, " ");
+const normalizeSiwinDocument = (value) => {
+  const document = clean(value).replace(/\D/g, "");
+  return document.length === 11 || document.length === 14 ? document : null;
+};
 
 function businessDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -57,6 +61,7 @@ function initializeDataDirectory(directory) {
       siwin_cad INTEGER,
       siwin_estudio INTEGER NOT NULL DEFAULT 0,
       nome TEXT,
+      documento TEXT,
       email TEXT,
       telefone TEXT,
       celular TEXT,
@@ -297,6 +302,10 @@ function ensureEventColumns() {
 
 function ensureClientColumns() {
   const existing = new Set(db.prepare("PRAGMA table_info(clientes)").all().map((column) => column.name));
+  if (!existing.has("documento")) {
+    createSafetyBackup("migracao-documento-cliente");
+    db.exec("ALTER TABLE clientes ADD COLUMN documento TEXT");
+  }
   const columns = {
     siwin_cad: "INTEGER",
     siwin_estudio: "INTEGER NOT NULL DEFAULT 0",
@@ -554,7 +563,7 @@ function getOrder(orderId) {
 }
 
 function getOrderClientProfile(orderId) {
-  const row = db.prepare(`SELECT p.cliente_id, c.nome, c.email, c.telefone, c.celular,
+  const row = db.prepare(`SELECT p.cliente_id, c.nome, c.documento, c.email, c.telefone, c.celular,
       c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf, c.cep
     FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.id=?`).get(clean(orderId));
   if (!row) return { ok: false, error: "NOT_FOUND", message: "Pedido não encontrado." };
@@ -564,7 +573,7 @@ function getOrderClientProfile(orderId) {
     linked: true,
     profile: {
       nomeCompleto: row.nome,
-      cpf: null,
+      documento: row.documento,
       email: row.email,
       telefone: row.telefone,
       celular: row.celular,
@@ -868,12 +877,12 @@ function syncSiwinClients(rows) {
   if (!Array.isArray(rows)) throw new Error("Resposta inv\u00e1lida do SIWIN.");
   const timestamp = now();
   const upsert = db.prepare(`INSERT INTO clientes (
-    id,siwin_cad,siwin_estudio,nome,email,telefone,celular,logradouro,numero,complemento,bairro,cidade,uf,cep,
+    id,siwin_cad,siwin_estudio,nome,documento,email,telefone,celular,logradouro,numero,complemento,bairro,cidade,uf,cep,
     siwin_cadastrado_em,siwin_sincronizado_em,criado_em,atualizado_em
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(siwin_cad) DO UPDATE SET
     siwin_estudio=MAX(clientes.siwin_estudio,excluded.siwin_estudio),
-    nome=excluded.nome,email=excluded.email,telefone=excluded.telefone,celular=excluded.celular,
+    nome=excluded.nome,documento=COALESCE(excluded.documento,clientes.documento),email=excluded.email,telefone=excluded.telefone,celular=excluded.celular,
     logradouro=excluded.logradouro,numero=excluded.numero,complemento=excluded.complemento,
     bairro=excluded.bairro,cidade=excluded.cidade,uf=excluded.uf,cep=excluded.cep,
     siwin_cadastrado_em=excluded.siwin_cadastrado_em,
@@ -892,6 +901,7 @@ function syncSiwinClients(rows) {
         siwinCad,
         Number(row.ESTUDIO) === 1 ? 1 : 0,
         clean(row.NOME) || null,
+        normalizeSiwinDocument(row.DOCUMENTO),
         normalizedEmail(row.E_MAIL) || null,
         clean(row.FONE) || null,
         clean(row.CELULAR) || null,
@@ -919,6 +929,31 @@ function syncSiwinClients(rows) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function getSiwinClientCads() {
+  return db.prepare("SELECT siwin_cad AS CAD FROM clientes WHERE siwin_cad IS NOT NULL ORDER BY siwin_cad").all().map((row) => Number(row.CAD));
+}
+
+function syncSiwinClientDocuments(rows) {
+  if (!Array.isArray(rows)) throw new Error("Resposta inválida do SIWIN.");
+  const update = db.prepare(`UPDATE clientes SET documento=?
+    WHERE siwin_cad=? AND ? IS NOT NULL AND documento IS NOT ?`);
+  let updated = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of rows) {
+      const siwinCad = Number(row.CAD);
+      const documento = normalizeSiwinDocument(row.DOCUMENTO);
+      if (!Number.isInteger(siwinCad) || siwinCad <= 0 || !documento) continue;
+      updated += Number(update.run(documento, siwinCad, documento, documento).changes);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { updated };
 }
 
 function markSiwinStudioClients(codes) {
@@ -1495,6 +1530,8 @@ module.exports = {
   getUnlinkedSessions,
   linkSiwinSessions,
   syncSiwinClients,
+  getSiwinClientCads,
+  syncSiwinClientDocuments,
   markSiwinStudioClients,
   syncSiwinOrders,
   replaceSiwinOrderItems,

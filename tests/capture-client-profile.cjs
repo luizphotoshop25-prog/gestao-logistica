@@ -48,14 +48,14 @@ if (!process.versions.electron) {
       await capture("client-profile-complete-1366x768");
 
       const copyButton = label => evaluate(`[...document.querySelectorAll('.client-profile-field button')].find(button=>button.getAttribute('aria-label')===${JSON.stringify('Copiar ' + label)}).click()`);
-      await copyButton("CPF"); await pause(50); assert.equal(await evaluate('window.copied.at(-1)'), "123.456.789-01");
+      await copyButton("CPF/CNPJ"); await pause(50); assert.equal(await evaluate('window.copied.at(-1)'), "123.456.789-01");
       await copyButton("E-mail"); await pause(50); assert.equal(await evaluate('window.copied.at(-1)'), "ana@example.invalid");
       await copyButton("Telefone"); await pause(50); assert.equal(await evaluate('window.copied.at(-1)'), "(41) 3333-4444");
       await copyButton("Endereço"); await pause(50); assert.equal(await evaluate('window.copied.at(-1)'), "Rua de Teste, 123 · Sala 2 · Centro");
       await evaluate('document.querySelector(".client-profile-footer .ui-button").click()'); await pause(50);
       const copiedAll = await evaluate('window.copied.at(-1)');
       assert.match(copiedAll, /Nome: Ana Cliente Sintética/);
-      assert.match(copiedAll, /CPF: 123\.456\.789-01/);
+      assert.match(copiedAll, /CPF\/CNPJ: 123\.456\.789-01/);
       assert.match(copiedAll, /Cidade\/UF: Curitiba\/PR/);
       assert.equal(copiedAll.includes("\n\n"), false, "copy-all must not include blank lines");
 
@@ -65,6 +65,7 @@ if (!process.versions.electron) {
       await capture("client-profile-error-1366x768");
       await evaluate('document.querySelector(".client-profile-error button").click()'); await wait(".client-profile-fields");
       assert.equal(await evaluate('document.querySelector(".client-profile-popover").innerText.includes("Não informado")'), true, "partial profile must explicitly show missing values");
+      assert.equal(await evaluate('document.querySelector(".client-profile-popover").innerText.includes("12.345.678/0001-90")'), true, "CNPJ must be formatted for display");
       await capture("client-profile-partial-1366x768");
 
       const beforeSwitchCalls = await evaluate("window.profileCalls.length");

@@ -76,6 +76,7 @@ async function performSync(database) {
           cs.SESSAO_PROFISSIONAL,
           cs.DATA_SESSAO,
           COALESCE(NULLIF(RTRIM(c.FANTASIA), ''), RTRIM(c.RAZAO)) AS NOME,
+          RTRIM(c.CGC_CPF) AS DOCUMENTO,
           RTRIM(c.E_MAIL) AS E_MAIL,
           RTRIM(COALESCE(NULLIF(c.FONE, ''), NULLIF(c.FONE_RES, ''), cc.FONE_RES)) AS FONE,
           RTRIM(COALESCE(NULLIF(c.CELULAR, ''), cc.CELULAR)) AS CELULAR,
@@ -170,6 +171,41 @@ async function performSync(database) {
   }
 }
 
+async function syncClientDocuments(database) {
+  const settings = readConnectionSettings();
+  const pool = await new sql.ConnectionPool({
+    server: settings.server,
+    port: 1433,
+    database: settings.database,
+    user: settings.user,
+    password: settings.password,
+    connectionTimeout: 8000,
+    requestTimeout: 30000,
+    options: { encrypt: false, trustServerCertificate: true },
+    pool: { max: 1, min: 0, idleTimeoutMillis: 5000 },
+  }).connect();
+  try {
+    const cads = [...new Set(database.getSiwinClientCads().filter((cad) => Number.isInteger(cad) && cad > 0))];
+    let updated = 0;
+    for (let start = 0; start < cads.length; start += 500) {
+      const request = pool.request();
+      const parameters = cads.slice(start, start + 500).map((cad, index) => {
+        request.input(`cad${index}`, sql.Int, cad);
+        return `@cad${index}`;
+      });
+      const result = await readQuery(request, `
+        SELECT c.CAD,RTRIM(c.CGC_CPF) AS DOCUMENTO
+        FROM dbo.Cad c
+        WHERE c.CAD IN (${parameters.join(",")})
+      `);
+      updated += database.syncSiwinClientDocuments(result.recordset).updated;
+    }
+    return { scanned: cads.length, updated };
+  } finally {
+    await pool.close();
+  }
+}
+
 function syncClients(database) {
   if (!activeSync) activeSync = performSync(database).finally(() => { activeSync = null; });
   return activeSync;
@@ -180,4 +216,4 @@ function safeError(error) {
   return message.replace(/password\s*=\s*[^;\s]+/gi, "password=[protegida]");
 }
 
-module.exports = { syncClients, safeError };
+module.exports = { syncClients, syncClientDocuments, safeError };

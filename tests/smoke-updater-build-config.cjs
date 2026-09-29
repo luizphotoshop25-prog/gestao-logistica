@@ -29,7 +29,7 @@ assert.deepEqual({
   packElevateHelper: defaults.nsis.packElevateHelper,
   deleteAppDataOnUninstall: defaults.nsis.deleteAppDataOnUninstall,
 }, { include: "build/installer.nsh", oneClick: true, perMachine: false, runAfterFinish: true, packElevateHelper: true, deleteAppDataOnUninstall: false }, "installer must remain per-user, one-click, and preserve app data");
-assert.equal(defaults.version, "0.1.8");
+assert.equal(defaults.version, "0.1.9");
 const installerInit = fs.readFileSync(path.join(project, "build/installer.nsh"), "utf8");
 assert.match(installerInit, /\$\{if\}\s+\$\{isUpdated\}[\s\S]*SetSilent silent/, "legacy auto-update launches must become silent before NSIS pages");
 const overridden = loadConfig({ GESTAO_UPDATE_GITHUB_OWNER: "example-owner", GESTAO_UPDATE_GITHUB_REPO: "another-repo" });

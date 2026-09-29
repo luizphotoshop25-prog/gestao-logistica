@@ -17,10 +17,12 @@ function clean(value: string | null | undefined): string {
   return String(value || "").trim();
 }
 
-function formatCpf(value: string | null): string {
+function formatDocument(value: string | null): string {
   const original = clean(value);
   const digits = original.replace(/\D/g, "");
-  return digits.length === 11 ? digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : original;
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  return original;
 }
 
 function formatCep(value: string | null): string {
@@ -152,7 +154,7 @@ export function OrderClientProfilePopover({ target, cacheVersion, onClose }: Pro
   const cityState = profile ? [clean(profile.cidade), clean(profile.uf)].filter(Boolean).join("/") : "";
   const fields: Array<[string, string]> = profile ? ([
     ["Nome", clean(profile.nomeCompleto)],
-    ["CPF", formatCpf(profile.cpf)],
+    ["CPF/CNPJ", formatDocument(profile.documento)],
     ["E-mail", clean(profile.email)],
     ["Telefone", formatPhone(profile.telefone)],
     ["Celular", formatPhone(profile.celular)],
@@ -195,7 +197,7 @@ export function OrderClientProfilePopover({ target, cacheVersion, onClose }: Pro
       {result?.ok && result.linked && profile && <>
         <div className="client-profile-fields">
           {([
-            ["CPF", formatCpf(profile.cpf), formatCpf(profile.cpf)],
+            ["CPF/CNPJ", formatDocument(profile.documento), formatDocument(profile.documento)],
             ["E-mail", clean(profile.email), clean(profile.email)],
             ["Telefone", formatPhone(profile.telefone), formatPhone(profile.telefone)],
             ["Celular", formatPhone(profile.celular), formatPhone(profile.celular)],

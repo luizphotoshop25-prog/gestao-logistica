@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
 const database = require("../electron/database.cjs");
 const { startApiServer } = require("../server/api-server.cjs");
@@ -18,11 +19,24 @@ async function main() {
   const originalLog = console.log;
   const originalInfo = console.info;
   try {
+    const migrationDirectory = path.join(root, "legacy-db");
+    database.initializeDataDirectory(migrationDirectory);
+    assert.equal(database.syncSiwinClients([{ CAD: 445566, NOME: "Cliente legado sintético", DOCUMENTO: null }]).imported, 1);
+    database.close();
+    const legacyFile = path.join(migrationDirectory, "gestao-logistica.sqlite3");
+    const legacyDb = new DatabaseSync(legacyFile);
+    legacyDb.exec("ALTER TABLE clientes DROP COLUMN documento");
+    legacyDb.close();
+    database.initializeDataDirectory(migrationDirectory);
+    assert.equal(database.syncSiwinClients([{ CAD: 445566, NOME: "Cliente legado sintético", DOCUMENTO: null }]).updated, 1, "legacy migration must preserve existing client rows");
+    assert.equal(fs.readdirSync(path.join(migrationDirectory, "backups")).some((name) => name.startsWith("antes-migracao-documento-cliente-")), true, "legacy migration must create a pre-change backup");
+    database.close();
+
     api = await startApiServer({ userDataPath: path.join(root, "api") });
     createTestUser(database);
     const token = (await login(api.origin)).session;
     const fixture = {
-      CAD: 778899, ESTUDIO: 1, NOME: "Cliente Perfil Sintético", E_MAIL: "perfil@example.invalid",
+      CAD: 778899, ESTUDIO: 1, NOME: "Cliente Perfil Sintético", DOCUMENTO: "12.345.678/0001-90", E_MAIL: "perfil@example.invalid",
       FONE: "4133334444", CELULAR: "41999998888", LOGRADOURO: "Rua de Teste", NUMERO: "123",
       COMPLEMENTO: "Sala 2", BAIRRO: "Centro", CIDADE: "Curitiba", UF: "PR", CEP: "80000000",
     };
@@ -33,14 +47,28 @@ async function main() {
 
     const expected = {
       ok: true, linked: true, profile: {
-        nomeCompleto: "Cliente Perfil Sintético", cpf: null, email: "perfil@example.invalid",
+        nomeCompleto: "Cliente Perfil Sintético", documento: "12345678000190", email: "perfil@example.invalid",
         telefone: "4133334444", celular: "41999998888", logradouro: "Rua de Teste", numero: "123",
         complemento: "Sala 2", bairro: "Centro", cidade: "Curitiba", uf: "PR", cep: "80000000",
       },
     };
     assert.deepEqual(database.getOrderClientProfile(order.id), expected);
+    assert.equal(database.syncSiwinClients([{ ...fixture, DOCUMENTO: "inválido" }]).updated, 1);
+    assert.equal(database.getOrderClientProfile(order.id).profile.documento, expected.profile.documento, "blank or malformed source data must not erase a valid document");
+    assert.equal(database.syncSiwinClients([{ ...fixture, DOCUMENTO: "987.654.321-00" }]).updated, 1);
+    assert.equal(database.getOrderClientProfile(order.id).profile.documento, "98765432100", "existing clients must receive updated documents");
+    assert.equal(database.syncSiwinClients([{ ...fixture, DOCUMENTO: "12.345.678/0001-90" }]).updated, 1);
+    assert.equal(database.syncSiwinClientDocuments([{ CAD: fixture.CAD, DOCUMENTO: "98.765.432/1000-19" }]).updated, 1, "targeted backfill must update documents for existing CADs");
+    const unchangedMail = database.getOrderClientProfile(order.id).profile.email;
+    assert.equal(unchangedMail, fixture.E_MAIL, "targeted backfill must preserve unrelated client fields");
+    assert.equal(database.syncSiwinClientDocuments([{ CAD: fixture.CAD, DOCUMENTO: "sem documento" }]).updated, 0, "malformed backfill values must be ignored");
+    assert.equal(database.getOrderClientProfile(order.id).profile.documento, "98765432100019");
+    expected.profile.documento = "98765432100019";
 
     const source = fs.readFileSync(path.join(__dirname, "../src/services/dataService.ts"), "utf8");
+    const siwinSource = fs.readFileSync(path.join(__dirname, "../electron/siwin.cjs"), "utf8");
+    assert.match(siwinSource, /RTRIM\(c\.CGC_CPF\) AS DOCUMENTO/);
+    assert.match(siwinSource, /function readQuery[\s\S]*?assertReadOnlyQuery/);
     const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
     let requestedUrl = "";
     const fixtureFetch = async (url, init) => {
@@ -81,9 +109,10 @@ async function main() {
     console.log = originalLog;
     console.info = originalInfo;
     const logged = logs.join("\n");
-    for (const value of [fixture.NOME, fixture.E_MAIL, fixture.FONE, fixture.CELULAR, fixture.LOGRADOURO, fixture.NUMERO, fixture.CEP]) assert.equal(logged.includes(value), false, `PII appeared in logs: ${value}`);
-    assert.equal(Object.keys(expected.profile).includes("cpf"), true);
-    assert.equal(expected.profile.cpf, null, "CPF is unavailable in the SQLite/SIWIN synchronization contract");
+    for (const value of [fixture.NOME, fixture.DOCUMENTO, "12345678000190", fixture.E_MAIL, fixture.FONE, fixture.CELULAR, fixture.LOGRADOURO, fixture.NUMERO, fixture.CEP]) assert.equal(logged.includes(value), false, "PII appeared in logs");
+    assert.equal(Object.keys(expected.profile).includes("documento"), true);
+    assert.equal(requestedUrl.includes(fixture.DOCUMENTO), false, "document must not be placed in the endpoint URL");
+    assert.equal(requestedUrl.includes(expected.profile.documento), false, "normalized document must not be placed in the endpoint URL");
     console.log("Ficha rápida do cliente: SQLite, IPC preload, DataService HTTP, autenticação, URL sem PII e logs aprovados.");
   } finally {
     console.log = originalLog;

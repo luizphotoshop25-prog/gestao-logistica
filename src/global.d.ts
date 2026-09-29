@@ -56,7 +56,7 @@ type Order = Record<string, unknown> & {
 
 type OrderClientProfile = {
   nomeCompleto: string | null;
-  cpf: string | null;
+  documento: string | null;
   email: string | null;
   telefone: string | null;
   celular: string | null;
