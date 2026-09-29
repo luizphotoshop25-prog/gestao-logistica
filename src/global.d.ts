@@ -116,6 +116,22 @@ type Solicitation = {
   atrasada: boolean;
 };
 type SolicitationResult = { ok: boolean; error?: string; revisionAtual?: number; solicitation?: Solicitation; message?: string; unchanged?: boolean };
+type DigitalShipmentSummary = {
+  id: string; numero_pedido_digital: string; data_envio: string; criado_por_usuario_id: string | null;
+  criado_em: string; atualizado_em: string; revision: number; registrado_por: string;
+  sessoes_quantidade: number; fotos_quantidade_soma: number; fotos_quantidade_desconhecida: number;
+};
+type DigitalShipmentItem = { pedido_id: string; sessao: string; cliente_nome: string | null; fotos_quantidade: number | null };
+type DigitalShipmentEvent = { id: string; acao: string; descricao: string; criado_em: string; usuario_id: string | null; usuario_nome: string };
+type DigitalShipment = DigitalShipmentSummary & { items: DigitalShipmentItem[]; events: DigitalShipmentEvent[] };
+type DigitalShipmentListResult = {
+  ok: boolean; error?: string; message?: string; rows: DigitalShipmentSummary[]; total: number;
+  page: number; pageSize: number; totalPages: number;
+  session: null | { found: boolean; order: { id: string; sessao: string; fotos_quantidade: number | null; cliente_nome: string | null } | null; shipments: DigitalShipmentSummary[] };
+};
+type DigitalShipmentResult = { ok: boolean; error?: string; message?: string; existingId?: string; revisionAtual?: number; priorShipments?: { pedido_id: string; sessao: string; envio_id: string; numero_pedido_digital: string; data_envio: string; registrado_por: string }[]; shipment?: DigitalShipment };
+type DigitalShipmentSessionsResult = { ok: boolean; error?: string; message?: string; notFound?: string[]; rows: ({ id: string; sessao: string; fotos_quantidade: number | null; cliente_nome: string | null; priorShipments: { id: string; numero_pedido_digital: string; data_envio: string; registrado_por: string }[] } | { sessao: string; notFound: true })[] };
+type DigitalShipmentOptions = { search?: string; page?: number; pageSize?: number; sort?: "date-desc" | "date-asc" | "number-asc" | "number-desc"; from?: string; to?: string };
 type ActiveUser = Pick<AuthUser, "id" | "nome" | "usuario" | "role">;
 type SiwinObservationRow = { id: string; siwin_ped_obs: number; usuario: string | null; cadastrado_em: string | null; observacao: string };
 type SelectionEmailRow = {
@@ -227,6 +243,12 @@ interface Window {
     createSolicitation(input: { descricao: string; observacao?: string; sessao_codigo?: string; responsavel_usuario_id: string; prazo_em?: string }): Promise<SolicitationResult>;
     updateSolicitation(input: { id: string; revision: number; values: Partial<Pick<Solicitation, "descricao" | "observacao" | "sessao_codigo" | "responsavel_usuario_id" | "prazo_em">> }): Promise<SolicitationResult>;
     transitionSolicitation(input: { id: string; revision: number; action: "start" | "complete" | "cancel" | "reopen" }): Promise<SolicitationResult>;
+    listDigitalShipments(options?: DigitalShipmentOptions): Promise<DigitalShipmentListResult>;
+    getDigitalShipment(id: string): Promise<{ ok: boolean; error?: string; message?: string; shipment?: DigitalShipment }>;
+    getDigitalShipmentsForOrder(orderId: string): Promise<{ ok: boolean; error?: string; message?: string; rows?: DigitalShipmentSummary[] }>;
+    resolveDigitalShipmentSessions(input: { sessions: string[] }): Promise<DigitalShipmentSessionsResult>;
+    createDigitalShipment(input: { numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
+    updateDigitalShipment(input: { id: string; revision: number; numeroPedidoDigital: string; dataEnvio: string; pedidoIds: string[]; confirmReenvio?: boolean }): Promise<DigitalShipmentResult>;
     getUpdaterState(): Promise<{ ok: boolean; enabled: boolean; state: AppUpdateState }>;
     downloadAppUpdate(): Promise<{ ok: boolean }>;
     installAppUpdate(): Promise<{ ok: boolean }>;

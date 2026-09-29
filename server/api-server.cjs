@@ -199,6 +199,45 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
         const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
         return sendJson(response, status, result, responseOrigin);
       }
+      if (request.method === "GET" && url.pathname === "/api/digital-shipments") {
+        const result = database.listDigitalShipments({
+          search: url.searchParams.get("search") || "", page: url.searchParams.get("page"),
+          pageSize: url.searchParams.get("pageSize"), sort: url.searchParams.get("sort") || "date-desc",
+          from: url.searchParams.get("from") || "", to: url.searchParams.get("to") || "",
+        });
+        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/digital-shipments/resolve-sessions") {
+        const body = await readJson(request);
+        const result = database.resolveDigitalShipmentSessions(body);
+        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/api/digital-shipments/orders/")) {
+        const orderId = decodeURIComponent(url.pathname.slice("/api/digital-shipments/orders/".length));
+        const result = database.getDigitalShipmentsForOrder(orderId);
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/digital-shipments") {
+        const body = await readJson(request);
+        const result = database.createDigitalShipment({ ...body, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 201 : result.error === "FORBIDDEN" ? 403
+          : ["DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
+            : result.error === "ORDER_NOT_FOUND" ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const digitalShipmentMatch = url.pathname.match(/^\/api\/digital-shipments\/([^/]+)$/);
+      if (digitalShipmentMatch && request.method === "GET") {
+        const shipment = database.getDigitalShipment(decodeURIComponent(digitalShipmentMatch[1]));
+        return sendJson(response, shipment ? 200 : 404, shipment ? { ok: true, shipment } : errorBody("NOT_FOUND", "Pedido Digital não encontrado."), responseOrigin);
+      }
+      if (digitalShipmentMatch && request.method === "PATCH") {
+        const body = await readJson(request);
+        const result = database.updateDigitalShipment({ ...body, id: decodeURIComponent(digitalShipmentMatch[1]), actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403
+          : ["REVISION_CONFLICT", "DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
+            : result.error === "NOT_FOUND" ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
       if (request.method === "GET" && url.pathname === "/api/orders") {
         const scope = url.searchParams.get("scope") === "mine" ? "mine" : "all";
         const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all", scope, userId: scope === "mine" ? currentUser.id : undefined });

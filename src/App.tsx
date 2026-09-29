@@ -32,6 +32,7 @@ import { OrderClientProfilePopover, type ClientProfileTarget } from "./component
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
 import { SolicitationsPage } from "./components/SolicitationsPage";
+import { DigitalOrderHistory, DigitalShipmentsPage } from "./components/DigitalShipmentsPage";
 import { sortOrdersBySession } from "./utils/session-sort";
 
 const stageLabels: Record<string, string> = {
@@ -130,7 +131,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [clientsRefresh, setClientsRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "myOrders" | "solicitations" | "clients">("central");
+  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "myOrders" | "digital" | "solicitations" | "clients">("central");
   const [treatmentAssignees, setTreatmentAssignees] = useState<ActiveUser[]>([]);
   const [lastSiwinSync, setLastSiwinSync] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
@@ -234,7 +235,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       }
       if (event.key === "/" && !editing) {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        if (workspacePage === "digital") document.getElementById("digital-search")?.focus();
+        else searchInputRef.current?.focus();
         return;
       }
       if (event.key !== "Escape") return;
@@ -245,7 +247,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [commandOpen, confirmation, preview, detail, formDirty]);
+  }, [commandOpen, confirmation, preview, detail, formDirty, workspacePage]);
 
   useEffect(() => {
     if (workspacePage !== "clients") return;
@@ -602,7 +604,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     setDetailTab("operation");
     window.requestAnimationFrame(() => document.getElementById(`detail-${suggestedSection}`)?.scrollIntoView({ block: "start" }));
   };
-  const navigateWorkspace = (page: "central" | "orders" | "myOrders" | "solicitations" | "clients") => {
+  const navigateWorkspace = (page: "central" | "orders" | "myOrders" | "digital" | "solicitations" | "clients") => {
     if (detail && formDirty) {
       setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e continuar", tone: "warning", onConfirm: () => { setDetail(null); setWorkspacePage(page); } });
       return;
@@ -616,7 +618,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       <nav className="app-navigation" aria-label="Navegação principal">
         <div className="shell-brand"><Layers3 size={25} /><div><strong>Gestão Logística</strong><small>Estúdio Manoel Guimarães</small></div></div>
         <span className="section-kicker">OPERAÇÃO</span>
-        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['myOrders', 'Meus Pedidos', UserCheck], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); if (key === "myOrders") { setSearch(""); setFilter("all"); setSearchScope("all"); } navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
+        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['myOrders', 'Meus Pedidos', UserCheck], ['digital', 'Enviados Digital', Send], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); if (key === "myOrders") { setSearch(""); setFilter("all"); setSearchScope("all"); } navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
         {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button className={workspacePage === "clients" ? "shell-active" : undefined} aria-current={workspacePage === "clients" ? "page" : undefined} onClick={() => navigateWorkspace("clients")}><Users size={18} />Clientes</button></div>}
         <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
       </nav>
@@ -628,7 +630,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
 
       <main>
         {notice && <div className="notice" role="status">{notice}<button aria-label="Fechar aviso" onClick={() => setNotice("")}><X size={15} /></button></div>}
-        {workspacePage === "central" ? <Central queue={centralQueue} onQueue={setCentralQueue} currentUser={currentUser} onOrder={(id) => void openOrder(id)} onOrders={(value) => { setSearch(""); setFilter(value); setWorkspacePage("orders"); }} onSolicitations={(item) => { setCentralTask(item || null); setWorkspacePage("solicitations"); }} /> : workspacePage === "solicitations" ? <SolicitationsPage
+        {workspacePage === "central" ? <Central queue={centralQueue} onQueue={setCentralQueue} currentUser={currentUser} onOrder={(id) => void openOrder(id)} onOrders={(value) => { setSearch(""); setFilter(value); setWorkspacePage("orders"); }} onSolicitations={(item) => { setCentralTask(item || null); setWorkspacePage("solicitations"); }} /> : workspacePage === "digital" ? <DigitalShipmentsPage currentUser={currentUser} onOpenOrder={(id) => setOrderPreviewId(id)} /> : workspacePage === "solicitations" ? <SolicitationsPage
           currentUser={currentUser}
           onNotice={setNotice}
           onOpenOrder={(session) => void openSolicitationSession(session)}
@@ -776,6 +778,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                 </tr>)}</tbody>
               </table></div> : <p className="no-products">Nenhum produto sincronizado para este pedido.</p>}
             </section>
+
+            <DigitalOrderHistory orderId={detail.order.id} />
 
             <section className="siwin-observations-section detail-pane pane-summary">
               <div className="section-title">

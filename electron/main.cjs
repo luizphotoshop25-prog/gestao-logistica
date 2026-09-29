@@ -138,6 +138,19 @@ function registerIpc() {
   }));
   handle("solicitations:update", (input) => database.updateSolicitation(input));
   handle("solicitations:transition", (input) => database.transitionSolicitation({ ...input, actorRole: "coordinator" }));
+  handle("digital-shipments:list", (options) => database.listDigitalShipments(options));
+  handle("digital-shipments:get", (id) => {
+    const shipment = database.getDigitalShipment(id);
+    return shipment ? { ok: true, shipment } : { ok: false, error: "NOT_FOUND", message: "Pedido Digital não encontrado." };
+  });
+  handle("digital-shipments:for-order", (orderId) => database.getDigitalShipmentsForOrder(orderId));
+  handle("digital-shipments:resolve-sessions", (input) => database.resolveDigitalShipmentSessions(input));
+  handle("digital-shipments:create", (input) => database.createDigitalShipment({
+    ...input, actorUserId: database.getLocalOperatorId(), actorRole: "coordinator",
+  }));
+  handle("digital-shipments:update", (input) => database.updateDigitalShipment({
+    ...input, actorUserId: database.getLocalOperatorId(), actorRole: "coordinator",
+  }));
   handle("siwin:status", () => database.getSiwinStatus());
   handle("siwin:sync", () => runSiwinSync());
   handle("thunderbird:sync", () => runThunderbirdSync());

@@ -28,6 +28,12 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "createSolicitation"
   | "updateSolicitation"
   | "transitionSolicitation"
+  | "listDigitalShipments"
+  | "getDigitalShipment"
+  | "getDigitalShipmentsForOrder"
+  | "resolveDigitalShipmentSessions"
+  | "createDigitalShipment"
+  | "updateDigitalShipment"
 > & {
   login(input: { usuario: string; senha: string }): Promise<AuthResult>;
   logout(): Promise<{ ok: boolean }>;
@@ -69,6 +75,12 @@ export const ipcDataService: DataService = {
   createSolicitation: (input) => window.gestaoAPI.createSolicitation(input),
   updateSolicitation: (input) => window.gestaoAPI.updateSolicitation(input),
   transitionSolicitation: (input) => window.gestaoAPI.transitionSolicitation(input),
+  listDigitalShipments: (options) => window.gestaoAPI.listDigitalShipments(options),
+  getDigitalShipment: (id) => window.gestaoAPI.getDigitalShipment(id),
+  getDigitalShipmentsForOrder: (orderId) => window.gestaoAPI.getDigitalShipmentsForOrder(orderId),
+  resolveDigitalShipmentSessions: (input) => window.gestaoAPI.resolveDigitalShipmentSessions(input),
+  createDigitalShipment: (input) => window.gestaoAPI.createDigitalShipment(input),
+  updateDigitalShipment: (input) => window.gestaoAPI.updateDigitalShipment(input),
 };
 
 const unsupportedMessage = "Indisponível no transporte HTTP de protótipo.";
@@ -143,6 +155,15 @@ export function createHttpDataService(apiUrl: string): DataService {
     createSolicitation: (input) => request("/api/solicitations", { method: "POST", body: JSON.stringify(input) }),
     updateSolicitation: (input) => request(`/api/solicitations/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revision: input.revision, values: input.values }) }),
     transitionSolicitation: ({ id, revision, action }) => request(`/api/solicitations/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ revision }) }),
+    listDigitalShipments: (options = {}) => {
+      const query = new URLSearchParams({ search: options.search || "", page: String(options.page || 1), pageSize: String(options.pageSize || 20), sort: options.sort || "date-desc", from: options.from || "", to: options.to || "" });
+      return request(`/api/digital-shipments?${query.toString()}`);
+    },
+    getDigitalShipment: (id) => request(`/api/digital-shipments/${encodeURIComponent(id)}`),
+    getDigitalShipmentsForOrder: (orderId) => request(`/api/digital-shipments/orders/${encodeURIComponent(orderId)}`),
+    resolveDigitalShipmentSessions: (input) => request("/api/digital-shipments/resolve-sessions", { method: "POST", body: JSON.stringify(input) }),
+    createDigitalShipment: (input) => request("/api/digital-shipments", { method: "POST", body: JSON.stringify(input) }),
+    updateDigitalShipment: (input) => request(`/api/digital-shipments/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revision: input.revision, numeroPedidoDigital: input.numeroPedidoDigital, dataEnvio: input.dataEnvio, pedidoIds: input.pedidoIds, confirmReenvio: input.confirmReenvio }) }),
   };
 }
 

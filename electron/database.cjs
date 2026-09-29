@@ -232,6 +232,7 @@ function initializeDataDirectory(directory) {
   ensureOrderRevision();
   ensureSelectionEmailColumns();
   ensureEventColumns();
+  ensureDigitalShipmentSchema();
   initializeTreatmentAssignment();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
@@ -320,6 +321,52 @@ function ensureSelectionEmailColumns() {
 function ensureEventColumns() {
   const existing = new Set(db.prepare("PRAGMA table_info(eventos)").all().map((column) => column.name));
   if (!existing.has("usuario_id")) db.exec("ALTER TABLE eventos ADD COLUMN usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL");
+}
+
+function ensureDigitalShipmentSchema() {
+  const hasShipments = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='digital_envios'").get();
+  const hasItems = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='digital_envio_itens'").get();
+  const hasEvents = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='digital_envio_eventos'").get();
+  if (hasShipments && hasItems && hasEvents) return;
+  createSafetyBackup("enviados-digital");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS digital_envios (
+        id TEXT PRIMARY KEY,
+        numero_pedido_digital TEXT NOT NULL,
+        data_envio TEXT NOT NULL,
+        criado_por_usuario_id TEXT REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
+        criado_em TEXT NOT NULL,
+        atualizado_em TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_digital_envios_numero ON digital_envios(numero_pedido_digital COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS idx_digital_envios_data ON digital_envios(data_envio,criado_em);
+      CREATE TABLE IF NOT EXISTS digital_envio_itens (
+        id TEXT PRIMARY KEY,
+        digital_envio_id TEXT NOT NULL REFERENCES digital_envios(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+        pedido_id TEXT NOT NULL REFERENCES pedidos(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+        criado_em TEXT NOT NULL,
+        UNIQUE(digital_envio_id,pedido_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_digital_envio_itens_envio ON digital_envio_itens(digital_envio_id);
+      CREATE INDEX IF NOT EXISTS idx_digital_envio_itens_pedido ON digital_envio_itens(pedido_id,digital_envio_id);
+      CREATE TABLE IF NOT EXISTS digital_envio_eventos (
+        id TEXT PRIMARY KEY,
+        digital_envio_id TEXT NOT NULL REFERENCES digital_envios(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+        usuario_id TEXT REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
+        acao TEXT NOT NULL,
+        descricao TEXT NOT NULL,
+        criado_em TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_digital_envio_eventos_envio ON digital_envio_eventos(digital_envio_id,criado_em);
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function ensureClientColumns() {
@@ -629,6 +676,251 @@ function listOrders(options = {}) {
       && row.etapa === "sessao_criada" && row.siwin_pedido_em && row.siwin_pedido_em < historyLimit);
   if (filter === "missing_client") return enriched.filter((row) => !row.cliente_id);
   return enriched.filter((row) => row.etapa === filter);
+}
+
+function normalizeDigitalShipmentNumber(value) { return clean(value).replace(/\s+/g, ""); }
+function normalizeDigitalSession(value) {
+  const session = clean(value).replace(/\s+/g, "");
+  if (!/^M?\d+$/i.test(session)) return null;
+  return `M${session.replace(/^M/i, "")}`.toUpperCase();
+}
+
+const digitalShipmentSummarySql = `SELECT s.id,s.numero_pedido_digital,s.data_envio,s.criado_por_usuario_id,
+    s.criado_em,s.atualizado_em,s.revision,coalesce(u.nome,'Usuário local') registrado_por,
+    count(i.id) sessoes_quantidade,
+    coalesce(sum(p.fotos_quantidade),0) fotos_quantidade_soma,
+    sum(CASE WHEN i.id IS NOT NULL AND p.fotos_quantidade IS NULL THEN 1 ELSE 0 END) fotos_quantidade_desconhecida
+  FROM digital_envios s LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id
+  LEFT JOIN digital_envio_itens i ON i.digital_envio_id=s.id
+  LEFT JOIN pedidos p ON p.id=i.pedido_id`;
+
+function getDigitalShipment(idValue) {
+  const shipmentId = clean(idValue);
+  const shipment = db.prepare(`${digitalShipmentSummarySql} WHERE s.id=? GROUP BY s.id`).get(shipmentId);
+  if (!shipment) return null;
+  const items = db.prepare(`SELECT p.id pedido_id,p.sessao,c.nome cliente_nome,p.fotos_quantidade
+    FROM digital_envio_itens i JOIN pedidos p ON p.id=i.pedido_id
+    LEFT JOIN clientes c ON c.id=p.cliente_id
+    WHERE i.digital_envio_id=? ORDER BY p.sessao COLLATE NOCASE`).all(shipmentId);
+  const events = db.prepare(`SELECT e.id,e.acao,e.descricao,e.criado_em,e.usuario_id,
+      coalesce(u.nome,'Usuário local') usuario_nome
+    FROM digital_envio_eventos e LEFT JOIN usuarios u ON u.id=e.usuario_id
+    WHERE e.digital_envio_id=? ORDER BY e.criado_em DESC,e.id DESC`).all(shipmentId);
+  return { ...shipment, sessoes_quantidade: Number(shipment.sessoes_quantidade || 0),
+    fotos_quantidade_soma: Number(shipment.fotos_quantidade_soma || 0),
+    fotos_quantidade_desconhecida: Number(shipment.fotos_quantidade_desconhecida || 0), items, events };
+}
+
+function getDigitalShipmentsForOrder(orderIdValue) {
+  const orderId = clean(orderIdValue);
+  if (!db.prepare("SELECT 1 FROM pedidos WHERE id=?").get(orderId)) return { ok: false, error: "NOT_FOUND", message: "Pedido não encontrado." };
+  const rows = db.prepare(`${digitalShipmentSummarySql}
+    WHERE EXISTS (SELECT 1 FROM digital_envio_itens ix WHERE ix.digital_envio_id=s.id AND ix.pedido_id=?)
+    GROUP BY s.id ORDER BY s.data_envio,s.criado_em`).all(orderId);
+  return { ok: true, rows: rows.map((row) => ({ ...row, sessoes_quantidade: Number(row.sessoes_quantidade || 0),
+    fotos_quantidade_soma: Number(row.fotos_quantidade_soma || 0),
+    fotos_quantidade_desconhecida: Number(row.fotos_quantidade_desconhecida || 0) })) };
+}
+
+function listDigitalShipments(options = {}) {
+  const page = Math.max(1, Math.trunc(Number(options.page) || 1));
+  const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(options.pageSize) || 20)));
+  const search = clean(options.search);
+  const compact = search.replace(/\s+/g, "");
+  const session = normalizeDigitalSession(compact);
+  const from = clean(options.from);
+  const to = clean(options.to);
+  if ((from && !validIsoDate(from)) || (to && !validIsoDate(to)) || (from && to && from > to))
+    return { ok: false, error: "INVALID_DATE_RANGE", message: "O período informado é inválido." };
+
+  const where = [];
+  const params = [];
+  if (search) {
+    if (session) {
+      where.push(`(s.numero_pedido_digital=? COLLATE NOCASE OR EXISTS (
+        SELECT 1 FROM digital_envio_itens ix JOIN pedidos px ON px.id=ix.pedido_id
+        WHERE ix.digital_envio_id=s.id AND px.sessao=? COLLATE NOCASE))`);
+      params.push(compact, session);
+    } else {
+      const escaped = search.toLowerCase().replace(/[\\%_]/g, "\\$&");
+      where.push(`(s.numero_pedido_digital=? COLLATE NOCASE OR EXISTS (
+        SELECT 1 FROM digital_envio_itens ix JOIN pedidos px ON px.id=ix.pedido_id
+        LEFT JOIN clientes cx ON cx.id=px.cliente_id
+        WHERE ix.digital_envio_id=s.id AND lower(coalesce(cx.nome,'')) LIKE ? ESCAPE '\\'))`);
+      params.push(compact, `%${escaped}%`);
+    }
+  }
+  if (from) { where.push("s.data_envio>=?"); params.push(from); }
+  if (to) { where.push("s.data_envio<=?"); params.push(to); }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  let orderBy = "s.data_envio DESC,s.criado_em DESC,s.id DESC";
+  if (options.sort === "date-asc") orderBy = "s.data_envio ASC,s.criado_em ASC,s.id ASC";
+  else if (options.sort === "number-asc" || options.sort === "number-desc") {
+    const direction = options.sort === "number-asc" ? "ASC" : "DESC";
+    orderBy = `CASE WHEN s.numero_pedido_digital<>'' AND s.numero_pedido_digital NOT GLOB '*[^0-9]*' THEN 0 ELSE 1 END ASC,
+      CASE WHEN s.numero_pedido_digital<>'' AND s.numero_pedido_digital NOT GLOB '*[^0-9]*' THEN length(s.numero_pedido_digital) END ${direction},
+      s.numero_pedido_digital COLLATE NOCASE ${direction},s.data_envio DESC,s.criado_em DESC`;
+  }
+  const total = db.prepare(`SELECT count(*) total FROM digital_envios s ${clause}`).get(...params).total;
+  const rows = db.prepare(`${digitalShipmentSummarySql} ${clause} GROUP BY s.id ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+    .all(...params, pageSize, (page - 1) * pageSize)
+    .map((row) => ({ ...row, sessoes_quantidade: Number(row.sessoes_quantidade || 0),
+      fotos_quantidade_soma: Number(row.fotos_quantidade_soma || 0),
+      fotos_quantidade_desconhecida: Number(row.fotos_quantidade_desconhecida || 0) }));
+
+  let sessionResult = null;
+  if (session) {
+    const order = db.prepare(`SELECT p.id,p.sessao,p.fotos_quantidade,c.nome cliente_nome
+      FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.sessao=? COLLATE NOCASE`).get(session) || null;
+    sessionResult = { found: Boolean(order), order, shipments: order ? getDigitalShipmentsForOrder(order.id).rows : [] };
+  }
+  return { ok: true, rows, total, page, pageSize, totalPages: Math.ceil(total / pageSize), session: sessionResult };
+}
+
+function resolveDigitalShipmentSessions(input) {
+  const values = Array.isArray(input?.sessions) ? input.sessions : [];
+  if (!values.length || values.length > 500) return { ok: false, error: "INVALID_SESSIONS", message: "Informe de 1 a 500 sessões." };
+  const normalizedValues = values.map(normalizeDigitalSession);
+  if (normalizedValues.some((value) => !value))
+    return { ok: false, error: "INVALID_SESSIONS", message: "Uma ou mais sessões têm formato inválido." };
+  const normalized = [...new Set(normalizedValues)];
+  const lookup = db.prepare(`SELECT p.id,p.sessao,p.fotos_quantidade,c.nome cliente_nome
+    FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.sessao=? COLLATE NOCASE`);
+  const prior = db.prepare(`SELECT s.id,s.numero_pedido_digital,s.data_envio,coalesce(u.nome,'Usuário local') registrado_por
+    FROM digital_envio_itens i JOIN digital_envios s ON s.id=i.digital_envio_id
+    LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id WHERE i.pedido_id=?
+    ORDER BY s.data_envio DESC,s.criado_em DESC`);
+  const rows = normalized.map((sessao) => {
+    const order = lookup.get(sessao) || null;
+    return order ? { ...order, priorShipments: prior.all(order.id) } : { sessao, notFound: true };
+  });
+  return { ok: true, rows, notFound: rows.filter((row) => row.notFound).map((row) => row.sessao) };
+}
+
+function digitalShipmentActor(actorUserId, actorRole) {
+  if (!["coordinator", "employee"].includes(actorRole)) return { error: "FORBIDDEN" };
+  const userId = clean(actorUserId);
+  if (!userId) return actorRole === "coordinator" ? { user: null } : { error: "FORBIDDEN" };
+  const user = db.prepare("SELECT id,nome,role,ativo FROM usuarios WHERE id=?").get(userId);
+  return user?.ativo === 1 && user.role === actorRole ? { user } : { error: "FORBIDDEN" };
+}
+
+function normalizedShipmentInput(input) {
+  const number = normalizeDigitalShipmentNumber(input?.numeroPedidoDigital);
+  const date = clean(input?.dataEnvio);
+  const pedidoIds = Array.isArray(input?.pedidoIds) ? [...new Set(input.pedidoIds.map(clean).filter(Boolean))] : [];
+  if (!number || number.length > 80) return { error: "INVALID_NUMBER", message: "Informe um número de pedido Digital válido (até 80 caracteres)." };
+  if (!validIsoDate(date)) return { error: "INVALID_DATE", message: "Informe uma data de envio válida." };
+  if (!pedidoIds.length || pedidoIds.length > 500) return { error: "INVALID_SESSIONS", message: "Selecione de 1 a 500 sessões existentes." };
+  const found = db.prepare(`SELECT id,sessao,fotos_quantidade FROM pedidos WHERE id IN (${pedidoIds.map(() => "?").join(",")})`).all(...pedidoIds);
+  if (found.length !== pedidoIds.length) return { error: "ORDER_NOT_FOUND", message: "Uma ou mais sessões não existem mais no Gestão Logística." };
+  return { number, date, pedidoIds, orders: found };
+}
+
+function priorDigitalShipments(pedidoIds, exceptShipmentId = "") {
+  if (!pedidoIds.length) return [];
+  const rows = db.prepare(`SELECT p.id pedido_id,p.sessao,s.id envio_id,s.numero_pedido_digital,s.data_envio,
+      coalesce(u.nome,'Usuário local') registrado_por
+    FROM digital_envio_itens i JOIN digital_envios s ON s.id=i.digital_envio_id
+    JOIN pedidos p ON p.id=i.pedido_id LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id
+    WHERE i.pedido_id IN (${pedidoIds.map(() => "?").join(",")}) AND s.id<>?
+    ORDER BY s.data_envio DESC,s.criado_em DESC`).all(...pedidoIds, exceptShipmentId);
+  return rows;
+}
+
+function insertDigitalShipmentEvent(shipmentId, userId, action, description) {
+  db.prepare("INSERT INTO digital_envio_eventos (id,digital_envio_id,usuario_id,acao,descricao,criado_em) VALUES (?,?,?,?,?,?)")
+    .run(id(), shipmentId, userId || null, action, description, now());
+}
+
+function createDigitalShipment(input) {
+  const actor = digitalShipmentActor(input?.actorUserId, input?.actorRole);
+  if (actor.error) return { ok: false, error: actor.error, message: "Usuário não autorizado a registrar envios." };
+  const values = normalizedShipmentInput(input);
+  if (values.error) return { ok: false, error: values.error, message: values.message };
+  const shipmentId = id();
+  const timestamp = now();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const duplicate = db.prepare("SELECT id FROM digital_envios WHERE numero_pedido_digital=? COLLATE NOCASE").get(values.number);
+    if (duplicate) { db.exec("ROLLBACK"); return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", existingId: duplicate.id, message: "Este pedido da Digital já foi registrado." }; }
+    const prior = priorDigitalShipments(values.pedidoIds);
+    if (prior.length && input?.confirmReenvio !== true) {
+      db.exec("ROLLBACK");
+      return { ok: false, error: "DUPLICATE_SESSIONS", priorShipments: prior,
+        message: `${new Set(prior.map((row) => row.pedido_id)).size} das sessões selecionadas já possui envio registrado.` };
+    }
+    db.prepare(`INSERT INTO digital_envios
+      (id,numero_pedido_digital,data_envio,criado_por_usuario_id,criado_em,atualizado_em,revision)
+      VALUES (?,?,?,?,?,?,1)`).run(shipmentId, values.number, values.date, actor.user?.id || null, timestamp, timestamp);
+    const add = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em) VALUES (?,?,?,?)");
+    for (const orderId of values.pedidoIds) add.run(id(), shipmentId, orderId, timestamp);
+    const who = actor.user?.nome || "Usuário local";
+    insertDigitalShipmentEvent(shipmentId, actor.user?.id, "created", `${who} registrou o pedido Digital ${values.number} com ${values.pedidoIds.length} sessões.`);
+    db.exec("COMMIT");
+    return { ok: true, shipment: getDigitalShipment(shipmentId) };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    if (String(error.message).includes("UNIQUE")) return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", message: "Este pedido da Digital já foi registrado." };
+    throw error;
+  }
+}
+
+function updateDigitalShipment(input) {
+  const actor = digitalShipmentActor(input?.actorUserId, input?.actorRole);
+  if (actor.error) return { ok: false, error: actor.error, message: "Usuário não autorizado a editar envios." };
+  const shipmentId = clean(input?.id);
+  const revision = input?.revision;
+  if (!Number.isSafeInteger(revision) || revision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "A revisão é obrigatória. Reabra o pedido Digital." };
+  const current = db.prepare("SELECT * FROM digital_envios WHERE id=?").get(shipmentId);
+  if (!current) return { ok: false, error: "NOT_FOUND", message: "Pedido Digital não encontrado." };
+  if (actor.user?.role !== "coordinator" && current.criado_por_usuario_id !== actor.user?.id)
+    return { ok: false, error: "FORBIDDEN", message: "Funcionários só podem editar os próprios registros." };
+  if (current.revision !== revision) return { ok: false, error: "REVISION_CONFLICT", revisionAtual: current.revision, message: "Este registro foi alterado por outra pessoa. Reabra o pedido Digital." };
+  const values = normalizedShipmentInput(input);
+  if (values.error) return { ok: false, error: values.error, message: values.message };
+  const existingIds = db.prepare("SELECT pedido_id FROM digital_envio_itens WHERE digital_envio_id=?").all(shipmentId).map((row) => row.pedido_id);
+  const existingSet = new Set(existingIds);
+  const nextSet = new Set(values.pedidoIds);
+  const added = values.pedidoIds.filter((orderId) => !existingSet.has(orderId));
+  const removed = existingIds.filter((orderId) => !nextSet.has(orderId));
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const duplicate = db.prepare("SELECT id FROM digital_envios WHERE numero_pedido_digital=? COLLATE NOCASE AND id<>?").get(values.number, shipmentId);
+    if (duplicate) { db.exec("ROLLBACK"); return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", existingId: duplicate.id, message: "Este pedido da Digital já foi registrado." }; }
+    const prior = priorDigitalShipments(added, shipmentId);
+    if (prior.length && input?.confirmReenvio !== true) {
+      db.exec("ROLLBACK");
+      return { ok: false, error: "DUPLICATE_SESSIONS", priorShipments: prior,
+        message: `${new Set(prior.map((row) => row.pedido_id)).size} das sessões adicionadas já possui envio registrado.` };
+    }
+    const timestamp = now();
+    const update = db.prepare(`UPDATE digital_envios SET numero_pedido_digital=?,data_envio=?,atualizado_em=?,revision=revision+1
+      WHERE id=? AND revision=?`).run(values.number, values.date, timestamp, shipmentId, revision);
+    if (update.changes !== 1) { db.exec("ROLLBACK"); return { ok: false, error: "REVISION_CONFLICT", message: "Este registro foi alterado por outra pessoa. Reabra o pedido Digital." }; }
+    const oldNumber = current.numero_pedido_digital;
+    const oldDate = current.data_envio;
+    if (oldNumber !== values.number) insertDigitalShipmentEvent(shipmentId, actor.user?.id, "number_changed", `Número do pedido Digital alterado de ${oldNumber} para ${values.number}.`);
+    if (oldDate !== values.date) insertDigitalShipmentEvent(shipmentId, actor.user?.id, "date_changed", `Data do envio alterada de ${oldDate} para ${values.date}.`);
+    const insert = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em) VALUES (?,?,?,?)");
+    for (const orderId of added) {
+      insert.run(id(), shipmentId, orderId, timestamp);
+      const session = values.orders.find((order) => order.id === orderId)?.sessao || orderId;
+      insertDigitalShipmentEvent(shipmentId, actor.user?.id, "item_added", `Sessão ${session} adicionada ao pedido Digital ${values.number}.`);
+    }
+    const remove = db.prepare("DELETE FROM digital_envio_itens WHERE digital_envio_id=? AND pedido_id=?");
+    for (const orderId of removed) {
+      const session = db.prepare("SELECT sessao FROM pedidos WHERE id=?").get(orderId)?.sessao || orderId;
+      remove.run(shipmentId, orderId);
+      insertDigitalShipmentEvent(shipmentId, actor.user?.id, "item_removed", `Sessão ${session} removida do pedido Digital ${values.number}.`);
+    }
+    db.exec("COMMIT");
+    return { ok: true, shipment: getDigitalShipment(shipmentId) };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    if (String(error.message).includes("UNIQUE")) return { ok: false, error: "DUPLICATE_DIGITAL_ORDER", message: "Este pedido da Digital já foi registrado." };
+    throw error;
+  }
 }
 
 function listClients(options = {}) {
@@ -1688,6 +1980,12 @@ module.exports = {
   close,
   getStatus,
   listOrders,
+  listDigitalShipments,
+  getDigitalShipment,
+  getDigitalShipmentsForOrder,
+  resolveDigitalShipmentSessions,
+  createDigitalShipment,
+  updateDigitalShipment,
   getDashboard,
   importSafeRows,
   updateMilestone,

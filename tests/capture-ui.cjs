@@ -37,11 +37,16 @@ database.initialize = (electronApp) => {
   const activeProfilePath = path.resolve(electronApp.getPath("userData"));
   if (activeProfilePath !== resolvedProfilePath) throw new Error(`Captura visual recusada: userData inesperado (${activeProfilePath}).`);
   initializeDatabase(electronApp);
-  const fixture = database.importSafeRows({ rows: [{ eligible: true, linha: 1, sessao: "M99999", clienteNome: "Cliente Teste Visual", clienteEmail: "teste-visual@example.invalid", clienteTelefone: "00000000000", clienteCidade: "Curitiba - TESTE", fotosQuantidade: 25, observacoes: "Fixture sintético da captura visual.", editor: "Editor Teste", selecaoFinalizadaEm: null, tratamentoConcluido: false }] });
-  if (!fixture.ok || fixture.imported !== 1) throw new Error(`Não foi possível preparar o fixture visual: ${fixture.message || "resultado inesperado"}.`);
+  const digitalSessions = ["M60001", "M60002", "M60003", "M60004"];
+  const fixtureRows = [{ eligible: true, linha: 1, sessao: "M99999", clienteNome: "Cliente Teste Visual", clienteEmail: "teste-visual@example.invalid", clienteTelefone: "00000000000", clienteCidade: "Curitiba - TESTE", fotosQuantidade: 25, observacoes: "Fixture sintético da captura visual.", editor: "Editor Teste", selecaoFinalizadaEm: null, tratamentoConcluido: false }, ...digitalSessions.map((sessao, index) => ({ eligible: true, linha: index + 2, sessao, clienteNome: `Cliente Exemplo ${String.fromCharCode(65 + index)}`, clienteEmail: `digital-${index}@example.invalid`, clienteTelefone: `0000000000${index + 1}`, clienteCidade: "Curitiba - TESTE", fotosQuantidade: 8 + index * 2, observacoes: "Fixture sintético de Enviados Digital.", editor: "Editor Teste", selecaoFinalizadaEm: null, tratamentoConcluido: false }))];
+  const fixture = database.importSafeRows({ rows: fixtureRows });
+  if (!fixture.ok || fixture.imported !== fixtureRows.length) throw new Error(`Não foi possível preparar o fixture visual: ${fixture.message || "resultado inesperado"}.`);
   const coordinator = database.createUser({ nome: "Coordenação Teste", usuario: "coordenacao-visual", role: "coordinator", senhaHash: "fixture-sintetico" });
   const employee = database.createUser({ nome: "Carlos Teste", usuario: "carlos-visual", role: "employee", senhaHash: "fixture-sintetico" });
   if (!coordinator.ok || !employee.ok) throw new Error("Não foi possível preparar usuários sintéticos para a captura de Solicitações.");
+  const digitalOrders = digitalSessions.map((sessao) => database.listOrders({ search: sessao })[0]);
+  const digital = database.createDigitalShipment({ numeroPedidoDigital: "900001", dataEnvio: "2026-09-29", pedidoIds: digitalOrders.filter((_order, index) => index !== 2).map((order) => order.id), actorUserId: coordinator.user.id, actorRole: "coordinator" });
+  if (!digital.ok) throw new Error(`Não foi possível preparar o fixture de Enviados Digital: ${digital.message || "resultado inesperado"}.`);
   const now = Date.now();
   const createRequest = (descricao, prazo, sessao = "M99999") => database.createSolicitation({ descricao, observacao: "Fixture visual sintética para validar a hierarquia dos detalhes.", sessao_codigo: sessao, responsavel_usuario_id: employee.user.id, criado_por_usuario_id: coordinator.user.id, criado_por_nome: coordinator.user.nome, prazo_em: prazo });
   for (const [descricao, prazo] of [
@@ -67,7 +72,8 @@ async function waitForSelector(window, selector, timeout = 5000) {
     if (found) return;
     await delay(80);
   }
-  throw new Error(`A captura visual não encontrou ${selector} em ${timeout} ms.`);
+  const detail = selector.includes("digital-table") ? await window.webContents.executeJavaScript("document.querySelector('.digital-screen')?.innerText.slice(0,900)") : "";
+  throw new Error(`A captura visual não encontrou ${selector} em ${timeout} ms. ${detail}`);
 }
 
 async function capture(window, destination) {
@@ -87,7 +93,7 @@ app.setPath("userData", profilePath);
 
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
-const allowedChannels = new Set(["app:status", "updater:get-state", "orders:list", "orders:get", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create"]);
+const allowedChannels = new Set(["app:status", "updater:get-state", "auth:local-current", "orders:list", "orders:get", "orders:treatment-assignees", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create", "digital-shipments:list", "digital-shipments:get", "digital-shipments:for-order", "digital-shipments:resolve-sessions", "digital-shipments:create", "digital-shipments:update"]);
 if (httpTransport) {
   allowedChannels.clear();
   allowedChannels.add("updater:get-state");
@@ -184,7 +190,7 @@ app.whenReady().then(() => {
 
         await window.webContents.executeJavaScript("document.querySelector('.detail-modal button[aria-label=\"Fechar ficha\"]')?.click()");
         await delay(220);
-        await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[2].click()");
+        await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[4].click()");
         await waitForSelector(window, ".solicitations-page");
         await waitForSelector(window, ".solicitation-card");
         const filterAndSearchPassed = await window.webContents.executeJavaScript(`(() => {
@@ -244,6 +250,55 @@ app.whenReady().then(() => {
         const clientsPath = outputPath.replace(/\.png$/i, "-clientes.png");
         await capture(window, clientsPath);
         generatedPaths.push(clientsPath);
+
+        const setValue = async (selector, value, prototype = "HTMLInputElement") => window.webContents.executeJavaScript(`(() => { const element=document.querySelector(${JSON.stringify(selector)}); const setter=Object.getOwnPropertyDescriptor(${prototype}.prototype,'value').set; setter.call(element,${JSON.stringify(value)}); element.dispatchEvent(new Event('input',{bubbles:true})); element.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+        const waitText = async (selector, text) => {
+          for (let attempt = 0; attempt < 60; attempt++) {
+            if (await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.innerText.includes(${JSON.stringify(text)})`)) return;
+            await delay(100);
+          }
+          throw new Error(`Captura Digital sem o texto esperado: ${text}`);
+        };
+        for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+          window.setContentSize(width, height);
+          await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[3].click()");
+          await waitForSelector(window, ".digital-panel");
+          await window.webContents.executeJavaScript("document.querySelector('.notice button[aria-label=\\\"Fechar aviso\\\"]')?.click()");
+          await setValue("#digital-search", ""); await delay(350);
+          await waitForSelector(window, ".digital-table tbody tr");
+          const saveDigital = async (name) => {
+            const destination = path.join(path.dirname(outputPath), `enviados-digital-${name}-${width}x${height}.png`);
+            await capture(window, destination); generatedPaths.push(destination);
+          };
+          await setValue("#digital-search", ""); await delay(350);
+          await saveDigital("principal");
+          await setValue("#digital-search", "M60001"); await waitText(".digital-session-result", "ENVIO LOCALIZADO");
+          await saveDigital("busca-M60001");
+          await setValue("#digital-search", "M60003"); await waitText(".digital-no-history", "Nenhum envio");
+          await saveDigital("sessao-sem-envio");
+          await setValue("#digital-search", ""); await delay(250);
+          await window.webContents.executeJavaScript("document.querySelector('.digital-heading .ui-button-primary').click()");
+          await waitForSelector(window, ".digital-form-modal");
+          await saveDigital("registrar-envio");
+          await setValue(".digital-bulk-entry textarea", "M60002\nM60003\nM60004", "HTMLTextAreaElement");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-bulk-entry button').click()");
+          await waitText(".digital-selection-summary", "3 sessões selecionadas");
+          await saveDigital("multiplas-sessoes");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-form-modal [aria-label=\\\"Fechar formulário\\\"]').click(); document.querySelector('.digital-heading .ui-button-primary').click()");
+          await waitForSelector(window, ".digital-form-modal");
+          await setValue(".digital-add-one input", "M60001");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-add-one button').click()");
+          await waitForSelector(window, ".digital-selected-list .previously-sent");
+          await saveDigital("aviso-reenvio");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-form-modal [aria-label=\\\"Fechar formulário\\\"]').click()");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-number-link').click()");
+          await waitForSelector(window, ".digital-detail-modal");
+          await saveDigital("detalhe-pedido");
+          await window.webContents.executeJavaScript("document.querySelector('.digital-detail-modal [aria-label=\\\"Fechar detalhe\\\"]').click()");
+          await setValue("#digital-search", "M60999"); await waitText(".digital-session-result", "Sessão não encontrada");
+          await waitForSelector(window, ".digital-screen .ui-state-empty");
+          await saveDigital("estado-vazio");
+        }
 
         process.stdout.write(`userData=${resolvedProfilePath}\n${generatedPaths.join("\n")}\n`);
         database.close();
