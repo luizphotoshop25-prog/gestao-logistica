@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Users,
+  UserCheck,
   X,
 } from "lucide-react";
 import { OrderPreview } from "./components/OrderPreview";
@@ -129,7 +130,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
   const [clientsRefresh, setClientsRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "solicitations" | "clients">("central");
+  const [workspacePage, setWorkspacePage] = useState<"central" | "orders" | "myOrders" | "solicitations" | "clients">("central");
+  const [treatmentAssignees, setTreatmentAssignees] = useState<ActiveUser[]>([]);
   const [lastSiwinSync, setLastSiwinSync] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -189,7 +191,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     setListError("");
     try {
       const [ordersResult, dashboardResult] = await Promise.all([
-        dataService.listOrders({ search, filter: search.trim() && searchScope === "all" ? "all" : filter }),
+        dataService.listOrders({ search, filter: search.trim() && searchScope === "all" ? "all" : filter, ...(workspacePage === "myOrders" ? { scope: "mine" as const } : {}) }),
         dataService.dashboard(),
       ]);
       if (requestId !== listRequestRef.current) return;
@@ -202,7 +204,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     } finally {
       if (requestId === listRequestRef.current) setInitialLoading(false);
     }
-  }, [search, filter, searchScope]);
+  }, [search, filter, searchScope, workspacePage, currentUser.id]);
 
   useEffect(() => {
     window.localStorage.setItem("gestao:last-filter", filter);
@@ -410,6 +412,10 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     finally { setBusy(false); }
     if (!result.ok) return setNotice(result.message || "Não foi possível abrir o pedido.");
     setDetail(result);
+    if (currentUser.role === "coordinator") {
+      const assignees = await dataService.listTreatmentAssignees().catch(() => ({ ok: false, rows: [] as ActiveUser[] }));
+      if (assignees.ok) setTreatmentAssignees(assignees.rows);
+    }
     setDetailTab("summary");
     const editable = [
       "galeria_url", "galeria_publicada_em", "link_enviado_em", "selecao_finalizada_em",
@@ -425,6 +431,32 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       const value = String(result.order[field] ?? "");
       return [field, field.endsWith("_em") ? value.slice(0, 10) : value];
     })));
+  };
+
+  const saveTreatmentAssignee = async (responsavelUsuarioId: string | null) => {
+    if (!detail || currentUser.role !== "coordinator") return;
+    setBusy(true);
+    try {
+      const result = await dataService.updateTreatmentAssignee({ id: detail.order.id, revisao: detail.order.revisao, responsavelUsuarioId });
+      if (!result.ok) { setNotice(result.message || "Não foi possível alterar o responsável."); return; }
+      setDetail(result);
+      setNotice("Responsável pelo tratamento atualizado.");
+      await reload();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível alterar o responsável."); }
+    finally { setBusy(false); }
+  };
+
+  const restoreTreatmentAssignee = async () => {
+    if (!detail || currentUser.role !== "coordinator") return;
+    setBusy(true);
+    try {
+      const result = await dataService.restoreAutomaticTreatmentAssignee({ id: detail.order.id, revisao: detail.order.revisao });
+      if (!result.ok) { setNotice(result.message || "Não foi possível restaurar a atribuição automática."); return; }
+      setDetail(result);
+      setNotice("Atribuição automática restaurada.");
+      await reload();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível restaurar a atribuição automática."); }
+    finally { setBusy(false); }
   };
 
   const openSolicitationSession = async (session: string) => {
@@ -570,7 +602,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     setDetailTab("operation");
     window.requestAnimationFrame(() => document.getElementById(`detail-${suggestedSection}`)?.scrollIntoView({ block: "start" }));
   };
-  const navigateWorkspace = (page: "central" | "orders" | "solicitations" | "clients") => {
+  const navigateWorkspace = (page: "central" | "orders" | "myOrders" | "solicitations" | "clients") => {
     if (detail && formDirty) {
       setConfirmation({ title: "Descartar alterações?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e continuar", tone: "warning", onConfirm: () => { setDetail(null); setWorkspacePage(page); } });
       return;
@@ -584,7 +616,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
       <nav className="app-navigation" aria-label="Navegação principal">
         <div className="shell-brand"><Layers3 size={25} /><div><strong>Gestão Logística</strong><small>Estúdio Manoel Guimarães</small></div></div>
         <span className="section-kicker">OPERAÇÃO</span>
-        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
+        {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['myOrders', 'Meus Pedidos', UserCheck], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); if (key === "myOrders") { setSearch(""); setFilter("all"); setSearchScope("all"); } navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
         {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button className={workspacePage === "clients" ? "shell-active" : undefined} aria-current={workspacePage === "clients" ? "page" : undefined} onClick={() => navigateWorkspace("clients")}><Users size={18} />Clientes</button></div>}
         <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
       </nav>
@@ -615,18 +647,18 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
           </div>
         </section> : <>
         <section className="orders-screen">
-          <div className="central-heading"><div><span className="section-kicker">OPERAÇÃO</span><h1>Pedidos</h1><p>Sessões, próximas ações e prazos da equipe.</p></div><button className="ui-button" onClick={() => void reload()} disabled={initialLoading}>Atualizar</button></div>
+          <div className="central-heading"><div><span className="section-kicker">OPERAÇÃO</span><h1>{workspacePage === "myOrders" ? "Meus Pedidos" : "Pedidos"}</h1><p>{workspacePage === "myOrders" ? "Pedidos atribuídos a você para tratamento." : "Sessões, próximas ações e prazos da equipe."}</p></div><button className="ui-button" onClick={() => void reload()} disabled={initialLoading}>Atualizar</button></div>
           <section className="orders-panel">
-            <div className="ui-tabs orders-queues" aria-label="Filas de pedidos">
+            {workspacePage !== "myOrders" && <div className="ui-tabs orders-queues" aria-label="Filas de pedidos">
               {[["needs_me", "Ação da equipe"], ["waiting", "Aguardando terceiros"], ["alerts", "Alertas"], ["all", "Todos os pedidos"]].map(([key, label]) => <button key={key} aria-pressed={filter === key} onClick={() => { setFilter(key); setSearchScope("queue"); }}>{label}</button>)}
-            </div>
+            </div>}
             <div className="orders-toolbar">
               <label className="orders-search"><Search size={17} /><input ref={searchInputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Sessão, cliente, telefone, CAD ou rastreio" aria-label="Buscar pedidos" /><kbd>/</kbd></label>
               <label className="orders-control">Buscar em<select value={searchScope} onChange={event => setSearchScope(event.target.value as "queue" | "all")}><option value="queue">Fila selecionada</option><option value="all">Todos os pedidos</option></select></label>
               <label className="orders-control">Ordenar por<select value={sortMode} onChange={event => setSortMode(event.target.value)}><option value="priority">Prioridade da fila</option><option value="deadline">Prazo mais próximo</option><option value="recent">Movimentação recente</option><option value="client">Nome do cliente</option><option value="session-desc">Sessão: maior para menor</option><option value="session-asc">Sessão: menor para maior</option></select></label>
               {window.gestaoConfig.dataTransport !== "http" && <button className="ui-button" onClick={() => { setBulkMode(!bulkMode); setSelectedIds([]); }}>{bulkMode ? "Cancelar seleção" : "Selecionar vários"}</button>}
             </div>
-            <div className="orders-context"><span>{search.trim() && searchScope === "all" ? "Busca em todos os pedidos" : filterLabels[filter] || "Todos os pedidos"} · {initialLoading ? "Carregando…" : listError ? "Consulta indisponível" : orders.length + " pedidos"}</span>{search && <button className="orders-clear" onClick={() => setSearch("")}>Limpar busca</button>}{!["needs_me", "waiting", "alerts", "all"].includes(filter) && <button className="orders-clear" onClick={() => setFilter("all")}>Remover filtro</button>}</div>
+            <div className="orders-context"><span>{workspacePage === "myOrders" ? "Atribuídos a você" : search.trim() && searchScope === "all" ? "Busca em todos os pedidos" : filterLabels[filter] || "Todos os pedidos"} · {initialLoading ? "Carregando…" : listError ? "Consulta indisponível" : orders.length + " pedidos"}</span>{search && <button className="orders-clear" onClick={() => setSearch("")}>Limpar busca</button>}{workspacePage !== "myOrders" && !["needs_me", "waiting", "alerts", "all"].includes(filter) && <button className="orders-clear" onClick={() => setFilter("all")}>Remover filtro</button>}</div>
             {bulkMode && <div className="bulk-bar">
               <button className="bulk-select-all" onClick={toggleVisibleOrders}>{allVisibleSelected ? "Desmarcar página" : `Selecionar página (${visibleOrderIds.length})`}</button>
               <strong>{selectedIds.length} selecionado(s)</strong>
@@ -640,7 +672,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
             </div>}
             {listError ? <ViewState kind="error" title={listError} onRetry={() => void reload()} /> : <div className="table-wrap orders-table-wrap">
               <table className="orders-table">
-                <caption className="sr-only">Pedidos da fila selecionada. Clique na sessão para consultar a prévia.</caption>
+                <caption className="sr-only">{workspacePage === "myOrders" ? "Pedidos atribuídos a você. Clique na sessão para consultar a prévia." : "Pedidos da fila selecionada. Clique na sessão para consultar a prévia."}</caption>
                 <thead><tr>{bulkMode && <th scope="col">Selecionar</th>}<th scope="col">Sessão / cliente</th><th scope="col">Próxima ação / etapa</th><th scope="col">Prazo de tratamento</th><th scope="col">Depende de</th><th scope="col">Fotos</th><th scope="col">Ações</th></tr></thead>
                 <tbody>
                   {initialLoading && <TableSkeleton rows={7} columns={bulkMode ? 7 : 6} />}
@@ -655,7 +687,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
                   </tr>)}
                 </tbody>
               </table>
-              {!initialLoading && !orders.length && <ViewState kind="empty" title={search ? "Nenhum pedido encontrado" : "Nenhuma pendência nesta fila"} description={search ? "Revise o termo ou escolha buscar em todos os pedidos." : "Selecione outra fila para continuar."} />}
+              {!initialLoading && !orders.length && <ViewState kind="empty" title={workspacePage === "myOrders" ? "Nenhum pedido atribuído a você no momento." : search ? "Nenhum pedido encontrado" : "Nenhuma pendência nesta fila"} description={workspacePage === "myOrders" ? "Quando houver pedidos ativos atribuídos a você, eles aparecerão aqui." : search ? "Revise o termo ou escolha buscar em todos os pedidos." : "Selecione outra fila para continuar."} />}
             </div>}
             {!initialLoading && !listError && orders.length > 0 && <Pagination page={page} totalPages={totalPages} totalItems={orders.length} pageSize={pageSize} onChange={setPage} />}
           </section>
@@ -700,7 +732,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
               <div className="summary-item"><Database size={15} /><span><small>Cadastro SIWIN</small><strong>CAD {detail.order.cliente_siwin_cad || "—"}</strong></span></div>
               <div className="summary-item"><Users size={15} /><span><small>Contato</small><strong>{detail.order.cliente_celular || detail.order.cliente_telefone || "Sem telefone"}</strong></span></div>
               <div className="summary-item"><PackageOpen size={15} /><span><small>Localidade</small><strong>{[detail.order.cliente_cidade, detail.order.cliente_uf].filter(Boolean).join("/") || "Sem cidade"}</strong></span></div>
-              <div className="summary-item"><ImageIcon size={15} /><span><small>Fotos cobradas</small><strong>{form.fotos_quantidade || 0} fotos</strong></span></div>
+              <div className="summary-item"><ImageIcon size={15} /><span><small>Fotos cobradas</small><strong>{form.fotos_quantidade === "" ? "Não informado" : `${form.fotos_quantidade} fotos`}</strong></span></div>
             </div>
             <section className="workflow-block" aria-label="Andamento do pedido">
               <div className="workflow-heading"><strong>Andamento do pedido</strong><span>A etapa destacada é a próxima que falta registrar</span></div>
@@ -799,6 +831,12 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
 
               <section className="form-section detail-pane pane-production" id="detail-production">
                 <h3>Tratamento</h3>
+                <div className="treatment-owner">
+                  <strong>Responsável pelo tratamento</strong>
+                  {currentUser.role === "coordinator" ? <label className="treatment-owner-control"><span className="sr-only">Responsável pelo tratamento</span><select aria-label="Responsável pelo tratamento" value={detail.order.tratamento_responsavel_usuario_id || ""} disabled={busy} onChange={(event) => void saveTreatmentAssignee(event.target.value || null)}><option value="">Não atribuído</option>{treatmentAssignees.map(user => <option key={user.id} value={user.id}>{user.nome}</option>)}</select></label> : <span>{detail.order.tratamento_responsavel_nome || "Não atribuído"}</span>}
+                  <small>{detail.order.tratamento_atribuicao_modo === "manual" ? "Atribuição manual" : "Atribuição automática"}</small>
+                  {currentUser.role === "coordinator" && detail.order.tratamento_atribuicao_modo === "manual" && <button type="button" className="attachment-button" disabled={busy} onClick={() => void restoreTreatmentAssignee()}>Usar atribuição automática</button>}
+                </div>
                 <label>Tratamento concluído em<input type="date" value={form.tratamento_concluido_em || ""} onChange={(event) => setForm({ ...form, tratamento_concluido_em: event.target.value })} /></label>
                 <div className="calculated-dates"><span>Prazo interno: {formatDate(detail.order.prazo_tratamento_em)}</span><span>Prazo máximo: {formatDate(detail.order.prazo_maximo_em)}</span></div>
               </section>

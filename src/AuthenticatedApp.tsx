@@ -12,7 +12,10 @@ export function AuthenticatedApp() {
   const [message, setMessage] = useState("");
   const [retrying, setRetrying] = useState(false);
   const restore = async () => { setLoading(true); setMessage(""); try { const token = await window.gestaoSession.read(); if (token) { dataService.restoreSession(token); const result = await dataService.currentUser(); if (result.ok && result.user) setUser(result.user); else await window.gestaoSession.clear(); } } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível conectar ao servidor do Gestão Logística."); } finally { setLoading(false); } };
-  useEffect(() => { if (httpMode) void restore(); }, [httpMode]);
+  useEffect(() => {
+    if (httpMode) void restore();
+    else void dataService.currentUser().then(result => { if (result.ok && result.user) setUser(result.user); }).catch(() => {});
+  }, [httpMode]);
   useEffect(() => {
     if (!httpMode) return;
     const expired = () => { setUser(null); setMessage("Sessão expirada. Entre novamente."); void window.gestaoSession.clear(); };

@@ -30,6 +30,9 @@ async function main() {
   assert.equal(await profileFixUpdater.isUpdateAvailable({ version: "0.1.8" }), true, "installed v0.1.7 must detect the HTTP profile fix v0.1.8");
   const documentUpdater = new AppUpdater(null, { version: "0.1.8" });
   assert.equal(await documentUpdater.isUpdateAvailable({ version: "0.1.9" }), true, "installed v0.1.8 must detect CPF/CNPJ support v0.1.9");
+  const treatmentAssigneeUpdater = new AppUpdater(null, { version: "0.1.9" });
+  assert.equal(await treatmentAssigneeUpdater.isUpdateAvailable({ version: "0.1.10" }), true, "installed v0.1.9 must detect treatment assignment v0.1.10");
+  assert.equal(await treatmentAssigneeUpdater.isUpdateAvailable({ version: "0.1.9" }), false, "identical v0.1.9 builds must not be offered as an update");
   try {
     const resources = path.join(root, "resources");
     fs.mkdirSync(resources);
@@ -95,7 +98,7 @@ async function main() {
     assert.equal((await failed.download()).ok, false);
     assert.deepEqual(failed.getState(), { status: "error", message: "Não foi possível baixar a atualização. O sistema continua disponível." });
     assert.equal(failed.install().ok, false);
-    console.log("Auto-update: SemVer 0.1.5→0.1.6 e 0.1.6→0.1.7, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
+    console.log("Auto-update: SemVer 0.1.9→0.1.10, versões repetidas, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
   } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 

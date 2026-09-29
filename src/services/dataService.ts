@@ -10,6 +10,9 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "getOrder"
   | "getOrderClientProfile"
   | "updateOrder"
+  | "listTreatmentAssignees"
+  | "updateTreatmentAssignee"
+  | "restoreAutomaticTreatmentAssignee"
   | "bulkUpdateOrders"
   | "markSelectionEmail"
   | "listClients"
@@ -35,7 +38,7 @@ export type DataService = Pick<Window["gestaoAPI"],
 export const ipcDataService: DataService = {
   login: async () => ({ ok: false, message: "Login não é exigido no modo IPC." }),
   logout: async () => ({ ok: true }),
-  currentUser: async () => ({ ok: true, user: { id: "ipc-local", nome: "Usuário local", usuario: "local", role: "coordinator" } }),
+  currentUser: () => window.gestaoAPI.localCurrentUser(),
   restoreSession: () => {},
   dashboard: () => window.gestaoAPI.dashboard(),
   siwinStatus: () => window.gestaoAPI.siwinStatus(),
@@ -48,6 +51,9 @@ export const ipcDataService: DataService = {
   getOrder: (orderId) => window.gestaoAPI.getOrder(orderId),
   getOrderClientProfile: (orderId) => window.gestaoAPI.getOrderClientProfile(orderId),
   updateOrder: (input) => window.gestaoAPI.updateOrder(input),
+  listTreatmentAssignees: () => window.gestaoAPI.listTreatmentAssignees(),
+  updateTreatmentAssignee: (input) => window.gestaoAPI.updateTreatmentAssignee(input),
+  restoreAutomaticTreatmentAssignee: (input) => window.gestaoAPI.restoreAutomaticTreatmentAssignee(input),
   bulkUpdateOrders: (input) => window.gestaoAPI.bulkUpdateOrders(input),
   markSelectionEmail: (input) => window.gestaoAPI.markSelectionEmail(input),
   listClients: (options) => window.gestaoAPI.listClients(options),
@@ -115,10 +121,13 @@ export function createHttpDataService(apiUrl: string): DataService {
     onSiwinUpdated: () => () => {},
     onThunderbirdUpdated: () => () => {},
     prepareSelection: async () => unsupported(),
-    listOrders: (options) => request(`/api/orders?search=${encodeURIComponent(options?.search || "")}&filter=${encodeURIComponent(options?.filter || "all")}`),
+    listOrders: (options) => request(`/api/orders?search=${encodeURIComponent(options?.search || "")}&filter=${encodeURIComponent(options?.filter || "all")}&scope=${options?.scope === "mine" ? "mine" : "all"}`),
     getOrder: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}`),
     getOrderClientProfile: (orderId) => request(`/api/orders/${encodeURIComponent(orderId)}/client-profile`),
     updateOrder: (input) => request(`/api/orders/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revisao: input.revisao, values: input.values }) }),
+    listTreatmentAssignees: () => request("/api/orders/treatment-assignees"),
+    updateTreatmentAssignee: (input) => request(`/api/orders/${encodeURIComponent(input.id)}/treatment-assignee`, { method: "PATCH", body: JSON.stringify({ revisao: input.revisao, responsavelUsuarioId: input.responsavelUsuarioId }) }),
+    restoreAutomaticTreatmentAssignee: (input) => request(`/api/orders/${encodeURIComponent(input.id)}/treatment-assignee/automatic`, { method: "POST", body: JSON.stringify({ revisao: input.revisao }) }),
     bulkUpdateOrders: async () => unsupported(),
     markSelectionEmail: async () => unsupported(),
     listClients: async () => ({ ...unsupported(), rows: [] }),

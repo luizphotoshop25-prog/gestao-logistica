@@ -71,6 +71,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .orders-screen .bulk-bar button{border:1px solid var(--ui-border);background:#fff;border-radius:6px;padding:8px;color:var(--ui-text);font-size:12px}
 .orders-screen .pagination{background:white;padding:14px 20px;border-top:1px solid var(--ui-border);font-size:12px}
 .orders-screen .pagination button{border-radius:6px;box-shadow:none}
+.treatment-owner{display:grid;gap:8px;padding:12px;border:1px solid var(--ui-border);border-radius:6px;background:#fff;margin:10px 0 16px}
+.treatment-owner>strong{font-size:12px;color:var(--ui-muted);text-transform:uppercase;letter-spacing:.05em}
+.treatment-owner>span{font-size:15px;font-weight:650;color:var(--ui-text)}
+.treatment-owner>small{font-size:11px;color:var(--ui-muted)}
+.treatment-owner-control select{width:100%;min-height:38px;border:1px solid var(--ui-border);border-radius:6px;padding:0 10px;background:#fff;color:var(--ui-text)}
 .ui-button-primary{background:var(--ui-primary);border-color:var(--ui-primary);color:#fff}.ui-button-primary:hover{background:#1e40af;color:#fff}
 .ui-drawer{width:min(560px,95vw);padding:0;border:0;border-left:1px solid var(--ui-border);box-shadow:-12px 0 40px #172b4d18}
 .ui-drawer>header{padding:20px 24px;border-bottom:1px solid var(--ui-border);position:sticky;top:0;background:white;z-index:2}

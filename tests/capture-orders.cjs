@@ -20,6 +20,7 @@ if (!process.versions.electron) {
  const evaluate=code=>win.webContents.executeJavaScript(code);
  const pause=()=>new Promise(resolve=>setTimeout(resolve,250));
  async function wait(selector){for(let i=0;i<80;i++){if(await evaluate('!!document.querySelector('+JSON.stringify(selector)+')'))return;await pause();}throw Error('Missing '+selector);}
+ async function waitFor(expression){for(let i=0;i<80;i++){if(await evaluate(expression))return;await pause();}throw Error('Timed out waiting for '+expression);}
  async function capture(name){await evaluate('document.fonts.ready');await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await new Promise(resolve=>setTimeout(resolve,700));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
  try {
  for(const [width,height] of [[1366,768],[1920,1080]]){
@@ -88,6 +89,36 @@ if (!process.versions.electron) {
  else if(state==='loading')await wait('.orders-table tbody');
  else await wait('.orders-screen .ui-state-'+state);
  await capture('orders-'+state);
+ }
+ for(const width of [1366,1920]){
+  const height=width===1366?768:1080;win.setContentSize(width,height);
+  await win.loadURL(process.env.CENTRAL_ORIGIN+'/tests/central-fixture.html?count=120&role=coordinator');await wait('.app-navigation');
+  await evaluate('document.querySelectorAll(".app-navigation>button")[2].click()');await wait('.orders-screen h1');await waitFor('window.lastOrderOptions?.scope === "mine"');await wait('.orders-table .session-link');
+  assert.equal(await evaluate('document.querySelector(".orders-screen h1").textContent'),'Meus Pedidos');
+  assert.equal(await evaluate('window.lastOrderOptions.scope'),'mine');
+  await evaluate('(()=>{const input=document.querySelector(".orders-search input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(input,"M9999118");input.dispatchEvent(new Event("input",{bubbles:true}))})()');await new Promise(r=>setTimeout(r,400));
+  assert.equal(await evaluate('window.lastOrderOptions.scope'),'mine','search must preserve authenticated mine scope');
+  assert.equal(await evaluate('document.querySelectorAll(".orders-table tbody .session-link").length'),1,'search is reused in My Orders');
+  await evaluate('(()=>{const input=document.querySelector(".orders-search input");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(input,"");input.dispatchEvent(new Event("input",{bubbles:true}))})()');await new Promise(r=>setTimeout(r,400));
+  await evaluate('(()=>{const select=document.querySelectorAll(".orders-control select")[1];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"session-desc");select.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause();
+  assert.equal(await evaluate('document.querySelector(".orders-table .session-link").textContent'),'M9999118','numeric session sorting is reused in My Orders');
+  assert.equal(await evaluate('document.querySelector(".pagination").innerText.includes("Página 1 de 2")'),true,'My Orders uses shared pagination');
+  await evaluate('[...document.querySelectorAll(".pagination button")].find(button=>button.getAttribute("aria-label")==="Próxima página").click()');await pause();
+  assert.equal(await evaluate('document.querySelector(".pagination").innerText.includes("Página 2 de 2")'),true);
+  await evaluate('[...document.querySelectorAll(".pagination button")].find(button=>button.getAttribute("aria-label")==="Página anterior").click()');await pause();
+  await evaluate('(()=>{const select=document.querySelectorAll(".orders-control select")[1];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"priority");select.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause();
+  await capture('my-orders-henrique-'+width+'x'+height);
+  await evaluate('document.querySelector(".orders-table .session-link").focus();document.querySelector(".orders-table .session-link").click()');await wait('.preview-facts');
+  await evaluate('document.querySelector(".order-preview .ui-button-primary").click()');await wait('.detail-modal .treatment-owner-control select');
+  await evaluate('document.querySelectorAll(".detail-nav button")[1].click()');await pause();
+  await evaluate('document.querySelector("#detail-production")?.scrollIntoView({block:"center"})');await pause();
+  assert.equal(await evaluate('document.querySelector(".treatment-owner small").textContent'),'Atribuição automática');await capture('treatment-assignment-auto-'+width+'x'+height);
+  await evaluate('(()=>{const select=document.querySelector(".treatment-owner-control select");Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"employee");select.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause();
+  assert.equal(await evaluate('document.querySelector(".treatment-owner small").textContent'),'Atribuição manual');await capture('treatment-assignment-manual-'+width+'x'+height);
+  await win.loadURL(process.env.CENTRAL_ORIGIN+'/tests/central-fixture.html?count=120&role=employee');await wait('.app-navigation');
+  await evaluate('document.querySelectorAll(".app-navigation>button")[2].click()');await waitFor('window.lastOrderOptions?.scope === "mine"');await wait('.orders-table .session-link');await capture('my-orders-carlos-'+width+'x'+height);
+  await win.loadURL(process.env.CENTRAL_ORIGIN+'/tests/central-fixture.html?count=120&role=employee&state=empty');await wait('.app-navigation');
+  await evaluate('document.querySelectorAll(".app-navigation>button")[2].click()');await waitFor('window.lastOrderOptions?.scope === "mine"');await wait('.orders-screen .ui-state-empty');await capture('my-orders-empty-'+width+'x'+height);
  }
  assert.deepEqual(errors,[]);console.log('Pedidos e ficha: 13 capturas; preview, paginação, foco, ficha, escopo da busca e estados aprovados. '+output);
  app.exit(0);

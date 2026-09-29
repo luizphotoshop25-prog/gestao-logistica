@@ -200,14 +200,33 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
         return sendJson(response, status, result, responseOrigin);
       }
       if (request.method === "GET" && url.pathname === "/api/orders") {
-        const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all" });
+        const scope = url.searchParams.get("scope") === "mine" ? "mine" : "all";
+        const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all", scope, userId: scope === "mine" ? currentUser.id : undefined });
         return sendJson(response, 200, { ok: true, rows }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/orders/treatment-assignees") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis pelo tratamento."), responseOrigin);
+        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
       }
       if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, responseOrigin);
       const clientProfileMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/client-profile$/);
       if (clientProfileMatch && request.method === "GET") {
         const result = database.getOrderClientProfile(decodeURIComponent(clientProfileMatch[1]));
         return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      const assignmentMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee$/);
+      if (assignmentMatch && request.method === "PATCH") {
+        const body = await readJson(request);
+        const result = database.updateTreatmentAssignee({ id: decodeURIComponent(assignmentMatch[1]), revisao: body.revisao, responsavelUsuarioId: body.responsavelUsuarioId, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const automaticMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee\/automatic$/);
+      if (automaticMatch && request.method === "POST") {
+        const body = await readJson(request);
+        const result = database.restoreAutomaticTreatmentAssignee({ id: decodeURIComponent(automaticMatch[1]), revisao: body.revisao, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
       }
       const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
       if (match && request.method === "GET") {

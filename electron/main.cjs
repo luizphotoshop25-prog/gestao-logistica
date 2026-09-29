@@ -110,10 +110,17 @@ function writeUpdaterLog(message) {
 
 function registerIpc() {
   handle("app:status", () => database.getStatus());
-  handle("orders:list", (options) => ({ ok: true, rows: database.listOrders(options) }));
+  handle("auth:local-current", () => ({ ok: true, user: database.getLocalOperator() }));
+  handle("orders:list", (options = {}) => {
+    const scoped = options.scope === "mine" ? { ...options, userId: database.getLocalOperatorId() } : options;
+    return { ok: true, rows: database.listOrders(scoped) };
+  });
   handle("orders:get", (orderId) => database.getOrder(orderId));
   handle("orders:client-profile", (orderId) => database.getOrderClientProfile(orderId));
   handle("orders:update", (input) => database.updateOrder(input));
+  handle("orders:treatment-assignees", () => ({ ok: true, rows: database.listActiveUsers() }));
+  handle("orders:treatment-assignee", (input) => database.updateTreatmentAssignee({ ...input, actorUserId: database.getLocalOperatorId(), actorRole: "coordinator" }));
+  handle("orders:treatment-assignee-automatic", (input) => database.restoreAutomaticTreatmentAssignee({ ...input, actorUserId: database.getLocalOperatorId(), actorRole: "coordinator" }));
   handle("orders:bulk-update", (input) => database.bulkUpdateOrders(input));
   handle("selection-email:mark", (input) => database.markSelectionEmail(input));
   handle("clients:list", (options) => ({ ok: true, rows: database.listClients(options) }));

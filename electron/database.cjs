@@ -228,9 +228,11 @@ function initializeDataDirectory(directory) {
     db.exec("ALTER TABLE pedidos RENAME COLUMN prazo_maximo_legado_em TO prazo_maximo_em");
   }
   ensureOrderColumns();
+  ensureTreatmentAssignment();
   ensureOrderRevision();
   ensureSelectionEmailColumns();
   ensureEventColumns();
+  initializeTreatmentAssignment();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
     setConfiguration("migracao_selecoes_conferidas_v1", now());
@@ -263,6 +265,26 @@ function ensureOrderColumns() {
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE pedidos ADD COLUMN ${name} ${type}`);
+  }
+}
+
+function ensureTreatmentAssignment() {
+  const existing = new Set(db.prepare("PRAGMA table_info(pedidos)").all().map((column) => column.name));
+  const needsMigration = !existing.has("tratamento_responsavel_usuario_id") || !existing.has("tratamento_atribuicao_modo");
+  if (needsMigration) {
+    createSafetyBackup("atribuicao-tratamento");
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!existing.has("tratamento_responsavel_usuario_id"))
+        db.exec("ALTER TABLE pedidos ADD COLUMN tratamento_responsavel_usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL");
+      if (!existing.has("tratamento_atribuicao_modo"))
+        db.exec("ALTER TABLE pedidos ADD COLUMN tratamento_atribuicao_modo TEXT NOT NULL DEFAULT 'auto' CHECK (tratamento_atribuicao_modo IN ('auto','manual'))");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_pedidos_tratamento_responsavel ON pedidos(tratamento_responsavel_usuario_id, tratamento_concluido_em, acompanhamento_status)");
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }
 
@@ -332,6 +354,91 @@ function setConfiguration(key, value, onlyIfMissing = false) {
     value,
     now(),
   );
+}
+
+function resolveTreatmentAssignee(photoCount, assignments = {}) {
+  if (photoCount === null || photoCount === undefined || photoCount === "") return null;
+  const count = Number(photoCount);
+  if (!Number.isSafeInteger(count) || count < 0) return null;
+  const limit = Number(assignments.limit ?? 48);
+  if (!Number.isSafeInteger(limit) || limit < 1) return null;
+  return count < limit ? (assignments.smallUserId || null) : (assignments.largeUserId || null);
+}
+
+function treatmentAssignmentConfig() {
+  const activeId = (key) => {
+    const configured = getConfiguration(key);
+    return configured && db.prepare("SELECT id FROM usuarios WHERE id=? AND ativo=1").get(configured)?.id || null;
+  };
+  return {
+    smallUserId: activeId("tratamento_usuario_ate_47"),
+    largeUserId: activeId("tratamento_usuario_48_mais"),
+    limit: Number(getConfiguration("tratamento_limite_carlos") || 48),
+  };
+}
+
+function initializeTreatmentAssignment() {
+  const config = treatmentAssignmentConfig();
+  if (!config.smallUserId) {
+    const henrique = db.prepare("SELECT id FROM usuarios WHERE ativo=1 AND (usuario=? COLLATE NOCASE OR nome=? COLLATE NOCASE) ORDER BY CASE WHEN usuario=? COLLATE NOCASE THEN 0 ELSE 1 END LIMIT 1")
+      .get("henrique", "Henrique", "henrique");
+    if (henrique) setConfiguration("tratamento_usuario_ate_47", henrique.id, true);
+  }
+  if (!config.largeUserId) {
+    const carlos = db.prepare("SELECT id FROM usuarios WHERE ativo=1 AND (usuario=? COLLATE NOCASE OR nome=? COLLATE NOCASE OR usuario=? COLLATE NOCASE OR nome=? COLLATE NOCASE) ORDER BY CASE WHEN usuario=? COLLATE NOCASE THEN 0 ELSE 1 END LIMIT 1")
+      .get("Carlos", "Carlos", "funcionario_teste", "Funcionário Teste", "Carlos");
+    if (carlos) setConfiguration("tratamento_usuario_48_mais", carlos.id, true);
+  }
+  setConfiguration("tratamento_limite_carlos", "48", true);
+  const mapping = treatmentAssignmentConfig();
+  if (mapping.smallUserId && mapping.largeUserId && !getConfiguration("tratamento_atribuicao_backfill_v1")) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const pending = db.prepare("SELECT id,fotos_quantidade,tratamento_responsavel_usuario_id FROM pedidos WHERE tratamento_atribuicao_modo='auto'").all();
+      const update = db.prepare("UPDATE pedidos SET tratamento_responsavel_usuario_id=?,atualizado_em=? WHERE id=? AND tratamento_atribuicao_modo='auto'");
+      const event = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,NULL,?)");
+      for (const order of pending) {
+        const assignee = resolveTreatmentAssignee(order.fotos_quantidade, mapping);
+        if (assignee === order.tratamento_responsavel_usuario_id) continue;
+        update.run(assignee, now(), order.id);
+        event.run(id(), order.id, "atribuicao_tratamento", "Atribuição automática do responsável pelo tratamento aplicada no backfill inicial.", now());
+      }
+      setConfiguration("tratamento_atribuicao_backfill_v1", now());
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+function setAutomaticTreatmentAssignment(orderId, photoCount, assignmentConfig = treatmentAssignmentConfig()) {
+  const current = db.prepare("SELECT tratamento_atribuicao_modo,tratamento_responsavel_usuario_id FROM pedidos WHERE id=?").get(orderId);
+  if (!current || current.tratamento_atribuicao_modo === "manual") return;
+  const assignee = resolveTreatmentAssignee(photoCount, assignmentConfig);
+  if (assignee === current.tratamento_responsavel_usuario_id) return;
+  db.prepare("UPDATE pedidos SET tratamento_responsavel_usuario_id=? WHERE id=? AND tratamento_atribuicao_modo='auto'").run(assignee, orderId);
+  db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,NULL,?)")
+    .run(id(), orderId, "atribuicao_tratamento", "Responsável pelo tratamento atribuído automaticamente conforme a quantidade de fotos.", now());
+}
+
+function getLocalOperatorId() {
+  return getLocalOperator()?.id || null;
+}
+
+function getLocalOperator() {
+  return db.prepare("SELECT id,nome,usuario,role FROM usuarios WHERE ativo=1 AND role='coordinator' ORDER BY CASE WHEN usuario='henrique' COLLATE NOCASE THEN 0 ELSE 1 END, nome COLLATE NOCASE LIMIT 1").get()
+    || { id: "ipc-local", nome: "Usuário local", usuario: "local", role: "coordinator" };
+}
+
+function assignmentBackfillCounts() {
+  const counts = db.prepare(`SELECT
+    sum(CASE WHEN tratamento_atribuicao_modo='auto' AND fotos_quantidade>=0 AND fotos_quantidade<? AND tratamento_responsavel_usuario_id=? THEN 1 ELSE 0 END) henrique,
+    sum(CASE WHEN tratamento_atribuicao_modo='auto' AND fotos_quantidade>=? AND tratamento_responsavel_usuario_id=? THEN 1 ELSE 0 END) carlos,
+    sum(CASE WHEN fotos_quantidade IS NULL THEN 1 ELSE 0 END) semQuantidade
+    FROM pedidos`).get(treatmentAssignmentConfig().limit, treatmentAssignmentConfig().smallUserId,
+    treatmentAssignmentConfig().limit, treatmentAssignmentConfig().largeUserId);
+  return { henrique: Number(counts.henrique || 0), carlos: Number(counts.carlos || 0), semQuantidade: Number(counts.semQuantidade || 0) };
 }
 
 function createDailyBackup() {
@@ -471,9 +578,10 @@ function listOrders(options = {}) {
       (SELECT MAX(e.criado_em) FROM eventos e WHERE e.pedido_id=p.id) ultimo_evento_em,
       (SELECT MAX(se.recebido_em) FROM selecoes_email se WHERE se.pedido_id=p.id) ultima_selecao_recebida_em,
       c.cidade cliente_cidade, c.logradouro cliente_logradouro, c.cep cliente_cep,
-      r.data_planejada remessa_data_planejada
+      r.data_planejada remessa_data_planejada, u.nome tratamento_responsavel_nome
       FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id
       LEFT JOIN remessas r ON r.id=p.remessa_id
+      LEFT JOIN usuarios u ON u.id=p.tratamento_responsavel_usuario_id
       WHERE (? = '' OR lower(p.sessao) LIKE ? OR lower(coalesce(c.nome,'')) LIKE ?
         OR lower(coalesce(p.codigo_rastreio,'')) LIKE ? OR lower(coalesce(c.email,'')) LIKE ?
         OR lower(coalesce(c.telefone,'')) LIKE ? OR lower(coalesce(c.celular,'')) LIKE ?
@@ -488,6 +596,8 @@ function listOrders(options = {}) {
       acao_recomendada: info.acao, urgencia_texto: info.urgencia, urgencia_dias: info.urgenciaDias };
   });
   const filter = clean(options.filter);
+  if (options.scope === "mine") return enriched.filter((row) => row.tratamento_responsavel_usuario_id === clean(options.userId)
+    && !row.tratamento_concluido_em && row.acompanhamento_status === "ativo");
   if (!filter || filter === "all") return enriched;
   if (filter === "needs_me") return enriched.filter((row) => row.operacional_bucket === "needs_me");
   if (filter === "waiting") return enriched.filter((row) => row.operacional_bucket === "waiting");
@@ -538,9 +648,10 @@ function getOrder(orderId) {
       c.telefone cliente_telefone, c.celular cliente_celular, c.logradouro cliente_logradouro,
       c.numero cliente_numero, c.complemento cliente_complemento, c.bairro cliente_bairro,
       c.cidade cliente_cidade, c.uf cliente_uf, c.cep cliente_cep, c.siwin_cad cliente_siwin_cad,
-      r.data_planejada remessa_data_planejada
+      r.data_planejada remessa_data_planejada, u.nome tratamento_responsavel_nome
     FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id
-    LEFT JOIN remessas r ON r.id=p.remessa_id WHERE p.id=?`).get(clean(orderId));
+    LEFT JOIN remessas r ON r.id=p.remessa_id
+    LEFT JOIN usuarios u ON u.id=p.tratamento_responsavel_usuario_id WHERE p.id=?`).get(clean(orderId));
   if (!order) return { ok: false, message: "Pedido não encontrado." };
   return {
     ok: true,
@@ -642,6 +753,13 @@ function updateOrder(input) {
     normalized.push(["prazo_tratamento_em", addCalendarDays(selection[1], 20)]);
     normalized.push(["prazo_maximo_em", addCalendarDays(selection[1], 60)]);
   }
+  let autoAssignmentChanged = false;
+  if (normalized.some(([field]) => field === "fotos_quantidade") && order.tratamento_atribuicao_modo !== "manual") {
+    const quantity = Object.fromEntries(normalized).fotos_quantidade;
+    const assignee = resolveTreatmentAssignee(quantity, treatmentAssignmentConfig());
+    autoAssignmentChanged = assignee !== order.tratamento_responsavel_usuario_id;
+    if (autoAssignmentChanged) normalized.push(["tratamento_responsavel_usuario_id", assignee]);
+  }
   normalized.push(["atualizado_em", now()]);
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -652,7 +770,10 @@ function updateOrder(input) {
       return { ok: false, error: "REVISION_CONFLICT", message: "Este pedido foi alterado por outro usuário. Suas alterações não foram salvas. Reabra a ficha para consultar a versão atual." };
     }
     db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)").run(
-      id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => field !== "prazo_tratamento_em" && field !== "prazo_maximo_em" && field !== "atualizado_em").map(([field]) => field).join(", ")}.`, clean(input?.usuarioId) || null, now(),
+      id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => !["prazo_tratamento_em", "prazo_maximo_em", "atualizado_em", "tratamento_responsavel_usuario_id"].includes(field)).map(([field]) => field).join(", ")}.`, clean(input?.usuarioId) || null, now(),
+    );
+    if (autoAssignmentChanged) db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)").run(
+      id(), orderId, "atribuicao_tratamento", "Responsável pelo tratamento recalculado automaticamente conforme a quantidade de fotos.", clean(input?.usuarioId) || null, now(),
     );
     db.exec("COMMIT");
     return getOrder(orderId);
@@ -660,6 +781,60 @@ function updateOrder(input) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function updateTreatmentAssignee(input) {
+  const orderId = clean(input?.id);
+  const revision = input?.revisao;
+  if (input?.actorRole !== "coordinator") return { ok: false, error: "FORBIDDEN", message: "Somente a coordenação pode alterar o responsável pelo tratamento." };
+  if (!Number.isSafeInteger(revision) || revision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "A revisão do pedido é obrigatória. Reabra a ficha." };
+  const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(orderId);
+  if (!order) return { ok: false, message: "Pedido não encontrado." };
+  if (order.revisao !== revision) return { ok: false, error: "REVISION_CONFLICT", revisaoAtual: order.revisao, message: "Este pedido foi alterado por outra pessoa. Reabra a ficha." };
+  const userId = clean(input?.responsavelUsuarioId);
+  const user = userId ? db.prepare("SELECT id,nome FROM usuarios WHERE id=? AND ativo=1").get(userId) : null;
+  if (userId && !user) return { ok: false, message: "Selecione um usuário ativo." };
+  const oldUser = order.tratamento_responsavel_usuario_id
+    ? db.prepare("SELECT nome FROM usuarios WHERE id=?").get(order.tratamento_responsavel_usuario_id) : null;
+  if (order.tratamento_atribuicao_modo === "manual" && order.tratamento_responsavel_usuario_id === (user?.id || null))
+    return { ...getOrder(orderId), unchanged: true };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const updated = db.prepare(`UPDATE pedidos SET tratamento_responsavel_usuario_id=?, tratamento_atribuicao_modo='manual',
+      atualizado_em=?, revisao=revisao+1 WHERE id=? AND revisao=?`)
+      .run(user?.id || null, now(), orderId, revision);
+    if (updated.changes !== 1) { db.exec("ROLLBACK"); return { ok: false, error: "REVISION_CONFLICT", message: "Este pedido foi alterado por outra pessoa. Reabra a ficha." }; }
+    const oldName = oldUser?.nome || "Não atribuído";
+    const newName = user?.nome || "Não atribuído";
+    db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)")
+      .run(id(), orderId, "atribuicao_tratamento", `Responsável pelo tratamento alterado manualmente de ${oldName} para ${newName}.`, clean(input?.actorUserId) || null, now());
+    db.exec("COMMIT");
+    return getOrder(orderId);
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+function restoreAutomaticTreatmentAssignee(input) {
+  const orderId = clean(input?.id);
+  const revision = input?.revisao;
+  if (input?.actorRole !== "coordinator") return { ok: false, error: "FORBIDDEN", message: "Somente a coordenação pode restaurar a atribuição automática." };
+  if (!Number.isSafeInteger(revision) || revision < 1) return { ok: false, error: "REVISION_REQUIRED", message: "A revisão do pedido é obrigatória. Reabra a ficha." };
+  const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(orderId);
+  if (!order) return { ok: false, message: "Pedido não encontrado." };
+  if (order.revisao !== revision) return { ok: false, error: "REVISION_CONFLICT", revisaoAtual: order.revisao, message: "Este pedido foi alterado por outra pessoa. Reabra a ficha." };
+  const assignee = resolveTreatmentAssignee(order.fotos_quantidade, treatmentAssignmentConfig());
+  if (order.tratamento_atribuicao_modo === "auto" && order.tratamento_responsavel_usuario_id === assignee)
+    return { ...getOrder(orderId), unchanged: true };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const updated = db.prepare(`UPDATE pedidos SET tratamento_responsavel_usuario_id=?, tratamento_atribuicao_modo='auto',
+      atualizado_em=?, revisao=revisao+1 WHERE id=? AND revisao=?`)
+      .run(assignee, now(), orderId, revision);
+    if (updated.changes !== 1) { db.exec("ROLLBACK"); return { ok: false, error: "REVISION_CONFLICT", message: "Este pedido foi alterado por outra pessoa. Reabra a ficha." }; }
+    db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)")
+      .run(id(), orderId, "atribuicao_tratamento", "Atribuição automática do responsável pelo tratamento restaurada.", clean(input?.actorUserId) || null, now());
+    db.exec("COMMIT");
+    return getOrder(orderId);
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 function addAttachment(orderId, type, sourcePath) {
@@ -989,6 +1164,7 @@ function syncSiwinOrders(rows) {
   let importedOrders = 0;
   let updatedOrders = 0;
   const timestamp = now();
+  const assignmentConfig = treatmentAssignmentConfig();
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const row of rows) {
@@ -1005,11 +1181,14 @@ function syncSiwinOrders(rows) {
         updateOrder.run(client.id, row.PED || null, clean(row.SITUACAO) || null, orderDate, deliveryDate, sessionDate,
           Number.isFinite(chargedPhotos) ? chargedPhotos : null, timestamp, existing.id);
         updatedOrders += 1;
+        setAutomaticTreatmentAssignment(existing.id, Number.isFinite(chargedPhotos) && chargedPhotos >= 0 ? Math.trunc(chargedPhotos) : null, assignmentConfig);
       } else {
         insertOrder.run(id(), session, client.id, Number.isFinite(chargedPhotos) ? chargedPhotos : null,
           "siwin", row.PED || null, clean(row.SITUACAO) || null,
           orderDate, deliveryDate, sessionDate, timestamp, timestamp);
         importedOrders += 1;
+        const inserted = db.prepare("SELECT id FROM pedidos WHERE sessao=?").get(session);
+        if (inserted) setAutomaticTreatmentAssignment(inserted.id, Number.isFinite(chargedPhotos) && chargedPhotos >= 0 ? Math.trunc(chargedPhotos) : null, assignmentConfig);
       }
     }
     db.exec("COMMIT");
@@ -1039,6 +1218,7 @@ function replaceSiwinOrderItems(rows) {
   let syncedItems = 0;
   let recalculatedOrders = 0;
   const timestamp = now();
+  const assignmentConfig = treatmentAssignmentConfig();
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const [ped, items] of byOrder) {
@@ -1055,6 +1235,7 @@ function replaceSiwinOrderItems(rows) {
       }
       const chargedPhotos = items.reduce((total, row) => total + (Number(row.VL_TOTAL) > 0 ? Number(row.FOTOS) || 0 : 0), 0);
       updateChargedPhotos.run(chargedPhotos, timestamp, order.id);
+      setAutomaticTreatmentAssignment(order.id, chargedPhotos, assignmentConfig);
       recalculatedOrders += 1;
     }
     db.exec("COMMIT");
@@ -1217,6 +1398,7 @@ function importSafeRows(preview) {
   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let imported = 0;
   let skipped = 0;
+  const assignmentConfig = treatmentAssignmentConfig();
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const row of eligible) {
@@ -1243,6 +1425,10 @@ function importSafeRows(preview) {
       );
       if (Number(result.changes) > 0) imported += 1;
       else skipped += 1;
+      if (Number(result.changes) > 0) {
+        const order = db.prepare("SELECT id FROM pedidos WHERE sessao=?").get(row.sessao);
+        if (order) setAutomaticTreatmentAssignment(order.id, row.fotosQuantidade, assignmentConfig);
+      }
     }
     db.exec("COMMIT");
     return { ok: true, imported, skipped, dashboard: getDashboard() };
@@ -1509,6 +1695,12 @@ module.exports = {
   getOrder,
   getOrderClientProfile,
   updateOrder,
+  updateTreatmentAssignee,
+  restoreAutomaticTreatmentAssignee,
+  getLocalOperatorId,
+  getLocalOperator,
+  assignmentBackfillCounts,
+  resolveTreatmentAssignee,
   createUser,
   listActiveUsers,
   setUserRole,

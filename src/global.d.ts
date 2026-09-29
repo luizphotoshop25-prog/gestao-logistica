@@ -40,6 +40,9 @@ type Order = Record<string, unknown> & {
   sessao: string;
   cliente_nome: string | null;
   fotos_quantidade: number | null;
+  tratamento_responsavel_usuario_id: string | null;
+  tratamento_responsavel_nome: string | null;
+  tratamento_atribuicao_modo: "auto" | "manual";
   etapa: string;
   selecao_finalizada_em: string | null;
   prazo_tratamento_em: string | null;
@@ -194,6 +197,7 @@ interface Window {
   };
   gestaoAPI: {
     status(): Promise<Record<string, unknown>>;
+    localCurrentUser(): Promise<AuthResult>;
     dashboard(): Promise<{ ok: boolean; dashboard: DashboardSummary }>;
     siwinStatus(): Promise<{ ok: boolean; lastCad: number; lastSync: string | null; lastImported: number }>;
     syncSiwin(): Promise<{ ok: boolean; imported: number; updated: number; total: number; importedOrders: number; updatedOrders: number; syncedItems: number; scopedClients: number; linked: number; unmatched: number; message?: string }>;
@@ -201,10 +205,13 @@ interface Window {
     onSiwinUpdated(callback: (result: { ok: boolean; imported: number; updated: number; total: number; importedOrders: number; updatedOrders: number; syncedItems: number; scopedClients: number; linked: number; unmatched: number }) => void): () => void;
     onThunderbirdUpdated(callback: (result: { ok: boolean; imported: number; linked: number; datesSet: number; unmatched: number; total: number; message?: string }) => void): () => void;
     prepareSelection(emailId: string): Promise<{ ok: boolean; listPath?: string; total?: number; message?: string }>;
-    listOrders(options?: { search?: string; filter?: string }): Promise<{ ok: boolean; rows: Order[] }>;
+    listOrders(options?: { search?: string; filter?: string; scope?: "all" | "mine" }): Promise<{ ok: boolean; rows: Order[] }>;
     getOrder(orderId: string): Promise<OrderDetailResult>;
     getOrderClientProfile(orderId: string): Promise<OrderClientProfileResult>;
     updateOrder(input: { id: string; revisao: number; values: Record<string, string | number | null> }): Promise<OrderDetailResult>;
+    listTreatmentAssignees(): Promise<{ ok: boolean; rows: ActiveUser[] }>;
+    updateTreatmentAssignee(input: { id: string; revisao: number; responsavelUsuarioId: string | null }): Promise<OrderDetailResult>;
+    restoreAutomaticTreatmentAssignee(input: { id: string; revisao: number }): Promise<OrderDetailResult>;
     bulkUpdateOrders(input: { ids: string[]; action: string; date?: string }): Promise<{ ok: boolean; updated?: number; skipped?: number; skippedDetails?: string[]; message?: string }>;
     markSelectionEmail(input: { id: string; field: "conferida_em" | "fotos_separadas_em"; value?: string }): Promise<{ ok: boolean; message?: string }>;
     listClients(options?: { search?: string; limit?: number }): Promise<{ ok: boolean; rows: ClientRow[] }>;

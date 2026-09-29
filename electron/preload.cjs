@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("gestaoAPI", {
   status: () => ipcRenderer.invoke("app:status"),
+  localCurrentUser: () => ipcRenderer.invoke("auth:local-current"),
   dashboard: () => ipcRenderer.invoke("dashboard:get"),
   siwinStatus: () => ipcRenderer.invoke("siwin:status"),
   syncSiwin: () => ipcRenderer.invoke("siwin:sync"),
@@ -21,6 +22,9 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   getOrder: (orderId) => ipcRenderer.invoke("orders:get", orderId),
   getOrderClientProfile: (orderId) => ipcRenderer.invoke("orders:client-profile", orderId),
   updateOrder: (input) => ipcRenderer.invoke("orders:update", input),
+  listTreatmentAssignees: () => ipcRenderer.invoke("orders:treatment-assignees"),
+  updateTreatmentAssignee: (input) => ipcRenderer.invoke("orders:treatment-assignee", input),
+  restoreAutomaticTreatmentAssignee: (input) => ipcRenderer.invoke("orders:treatment-assignee-automatic", input),
   bulkUpdateOrders: (input) => ipcRenderer.invoke("orders:bulk-update", input),
   markSelectionEmail: (input) => ipcRenderer.invoke("selection-email:mark", input),
   listClients: (options) => ipcRenderer.invoke("clients:list", options),
