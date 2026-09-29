@@ -28,6 +28,13 @@ if (!process.versions.electron) {
  await evaluate('document.querySelectorAll(".app-navigation>button")[1].click()');await wait('.orders-table tbody .session-link');
  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'),true,'Horizontal overflow');
  assert.equal(await evaluate('!!document.querySelector(".operations-overview, .workspace>aside")'),false,'Legacy layout remains');
+ const sortSelect='document.querySelectorAll(".orders-control select")[1]';
+ await evaluate('(()=>{const select='+sortSelect+';Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"session-desc");select.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause();
+ const descendingSessions=await evaluate('[...document.querySelectorAll(".orders-table .session-link")].map(element=>element.textContent.trim())');
+ const expectedDescending=Array.from({length:50},(_,index)=>'M9999'+(54-index));
+ assert.deepEqual(descendingSessions,expectedDescending,'Session descending order is numeric before pagination');
+ if(width===1366)await capture('orders-session-desc-'+width+'x'+height);
+ await evaluate('(()=>{const select='+sortSelect+';Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"priority");select.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause();
  await capture('orders-'+width+'x'+height);
  await evaluate('[...document.querySelectorAll("button")].find(button=>button.getAttribute("aria-label")==="Próxima página").click()');await pause();
  const sessionBefore=await evaluate('document.querySelector(".orders-table .session-link").textContent');

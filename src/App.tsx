@@ -29,6 +29,7 @@ import { OrderActionsMenu } from "./components/OrderActionsMenu";
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
 import { SolicitationsPage } from "./components/SolicitationsPage";
+import { sortOrdersBySession } from "./utils/session-sort";
 
 const stageLabels: Record<string, string> = {
   sessao_criada: "Sessão criada",
@@ -480,6 +481,8 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
     if (sortMode === "deadline") return rows.sort((a, b) => String(a.prazo_tratamento_em || "9999").localeCompare(String(b.prazo_tratamento_em || "9999")));
     if (sortMode === "recent") return rows.sort((a, b) => String(b.ultima_movimentacao_em || "").localeCompare(String(a.ultima_movimentacao_em || "")));
     if (sortMode === "client") return rows.sort((a, b) => String(a.cliente_nome || "").localeCompare(String(b.cliente_nome || ""), "pt-BR"));
+    if (sortMode === "session-desc") return sortOrdersBySession(rows, "descending");
+    if (sortMode === "session-asc") return sortOrdersBySession(rows, "ascending");
     return rows;
   }, [orders, sortMode]);
   const totalPages = Math.max(1, Math.ceil(sortedOrders.length / pageSize));
@@ -596,7 +599,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
             <div className="orders-toolbar">
               <label className="orders-search"><Search size={17} /><input ref={searchInputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Sessão, cliente, telefone, CAD ou rastreio" aria-label="Buscar pedidos" /><kbd>/</kbd></label>
               <label className="orders-control">Buscar em<select value={searchScope} onChange={event => setSearchScope(event.target.value as "queue" | "all")}><option value="queue">Fila selecionada</option><option value="all">Todos os pedidos</option></select></label>
-              <label className="orders-control">Ordenar por<select value={sortMode} onChange={event => setSortMode(event.target.value)}><option value="priority">Prioridade da fila</option><option value="deadline">Prazo mais próximo</option><option value="recent">Movimentação recente</option><option value="client">Nome do cliente</option></select></label>
+              <label className="orders-control">Ordenar por<select value={sortMode} onChange={event => setSortMode(event.target.value)}><option value="priority">Prioridade da fila</option><option value="deadline">Prazo mais próximo</option><option value="recent">Movimentação recente</option><option value="client">Nome do cliente</option><option value="session-desc">Sessão: maior para menor</option><option value="session-asc">Sessão: menor para maior</option></select></label>
               {window.gestaoConfig.dataTransport !== "http" && <button className="ui-button" onClick={() => { setBulkMode(!bulkMode); setSelectedIds([]); }}>{bulkMode ? "Cancelar seleção" : "Selecionar vários"}</button>}
             </div>
             <div className="orders-context"><span>{search.trim() && searchScope === "all" ? "Busca em todos os pedidos" : filterLabels[filter] || "Todos os pedidos"} · {initialLoading ? "Carregando…" : listError ? "Consulta indisponível" : orders.length + " pedidos"}</span>{search && <button className="orders-clear" onClick={() => setSearch("")}>Limpar busca</button>}{!["needs_me", "waiting", "alerts", "all"].includes(filter) && <button className="orders-clear" onClick={() => setFilter("all")}>Remover filtro</button>}</div>
