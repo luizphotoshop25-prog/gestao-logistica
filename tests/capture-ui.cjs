@@ -103,7 +103,10 @@ if (httpTransport) {
   allowedChannels.add("auth-session:clear");
 }
 const registerHandler = ipcMain.handle.bind(ipcMain);
-ipcMain.handle = (channel, handler) => registerHandler(channel, allowedChannels.has(channel) ? handler : () => {
+let digitalListCalls = 0;
+ipcMain.handle = (channel, handler) => registerHandler(channel, async (...args) => {
+  if (channel === "digital-shipments:list") digitalListCalls++;
+  if (allowedChannels.has(channel)) return handler(...args);
   fail(new Error(`IPC externo ou de escrita bloqueado: ${channel}`));
   return { ok: false, message: "Bloqueado pelo smoke visual." };
 });
@@ -260,6 +263,7 @@ app.whenReady().then(() => {
           }
           throw new Error(`Captura Digital sem o texto esperado: ${text}`);
         };
+        await window.webContents.executeJavaScript("(() => { window.__nativeInterval = window.setInterval.bind(window); window.setInterval = (callback, milliseconds, ...args) => window.__nativeInterval(callback, milliseconds === 60000 ? 250 : milliseconds, ...args); })()");
         for (const [width, height] of [[1366, 768], [1920, 1080]]) {
           window.setContentSize(width, height);
           await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[3].click()");
@@ -267,6 +271,29 @@ app.whenReady().then(() => {
           await window.webContents.executeJavaScript("document.querySelector('.notice button[aria-label=\\\"Fechar aviso\\\"]')?.click()");
           await setValue("#digital-search", ""); await delay(350);
           await waitForSelector(window, ".digital-table tbody tr");
+          if (width === 1366) {
+            const callsBeforePoll = digitalListCalls;
+            await delay(1450);
+            if (digitalListCalls <= callsBeforePoll) throw new Error("A listagem Enviados Digital não atualizou pelo polling visível.");
+            await window.webContents.executeJavaScript("document.querySelector('.digital-heading .ui-button-primary').click()");
+            await waitForSelector(window, ".digital-form-modal");
+            await setValue(".digital-form-fields input", "RASCUNHO-SINTETICO");
+            const callsWithFormOpen = digitalListCalls;
+            await delay(650);
+            const formPreserved = await window.webContents.executeJavaScript("document.querySelector('.digital-form-fields input')?.value === 'RASCUNHO-SINTETICO'");
+            if (!formPreserved || digitalListCalls !== callsWithFormOpen) throw new Error("O polling alterou o formulário aberto ou continuou consultando durante a edição.");
+            await window.webContents.executeJavaScript("document.querySelector('.digital-form-modal [aria-label=\\\"Fechar formulário\\\"]')?.click()");
+            await delay(150);
+            const callsBeforeReturn = digitalListCalls;
+            await window.webContents.executeJavaScript("document.dispatchEvent(new Event('visibilitychange'))");
+            const returnDeadline = Date.now() + 3000;
+            while (digitalListCalls <= callsBeforeReturn && Date.now() < returnDeadline) await delay(50);
+            if (digitalListCalls <= callsBeforeReturn) throw new Error("A listagem não atualizou ao retornar à aba visível.");
+            await window.webContents.executeJavaScript("window.setInterval = window.__nativeInterval; document.querySelectorAll('.app-navigation>button')[0].click()");
+            await delay(150);
+            await window.webContents.executeJavaScript("document.querySelectorAll('.app-navigation>button')[3].click()");
+            await waitForSelector(window, ".digital-table tbody tr");
+          }
           const saveDigital = async (name) => {
             const destination = path.join(path.dirname(outputPath), `enviados-digital-${name}-${width}x${height}.png`);
             await capture(window, destination); generatedPaths.push(destination);

@@ -239,10 +239,11 @@ class DigitalSyncState {
     const classification = String(outcome);
     if (!["IMPORTED", "ALREADY_IMPORTED", "EXISTING_MANUAL", "REVIEW_IMPORTED_CHANGED",
       "REVIEW_CONCURRENT_CHANGE", "REVIEW_INVALID_PLAN", "REVIEW_OVER_TOTAL",
-      "PENDING_MISSING_SESSION", "PENDING_NO_SESSION"].includes(classification))
+      "PENDING_MISSING_SESSION", "PENDING_NO_SESSION", "IMPORT_LIMIT_REACHED"].includes(classification))
       throw coded("DIGITAL_STATE_OUTCOME_INVALID");
     const state = ["IMPORTED", "ALREADY_IMPORTED"].includes(classification) ? "IMPORTED"
-      : classification.startsWith("PENDING_") ? "PENDING" : "REVIEW";
+      : classification.startsWith("PENDING_") ? "PENDING"
+        : classification === "IMPORT_LIMIT_REACHED" ? "READY" : "REVIEW";
     const db = openVerified(this.file, false);
     try {
       db.exec("BEGIN IMMEDIATE");
@@ -303,6 +304,10 @@ class DigitalSyncState {
       const counts = db.prepare(`SELECT COUNT(*) observed,
         SUM(CASE WHEN process_state='IMPORTED' THEN 1 ELSE 0 END) imported,
         SUM(CASE WHEN process_state IN ('PENDING','READY','REVIEW') THEN 1 ELSE 0 END) pending,
+        SUM(CASE WHEN process_state='READY' THEN 1 ELSE 0 END) awaiting_import,
+        SUM(CASE WHEN process_state='REVIEW' THEN 1 ELSE 0 END) in_review,
+        SUM(CASE WHEN process_state='CANCELLED' THEN 1 ELSE 0 END) cancelled,
+        SUM(CASE WHEN classification='BASELINE_EXISTING_UNIMPORTED' THEN 1 ELSE 0 END) baseline_unimported,
         SUM(CASE WHEN process_state IN ('BASELINE','CANCELLED','EXISTING') THEN 1 ELSE 0 END) ignored
         FROM observations`).get();
       const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
@@ -312,7 +317,9 @@ class DigitalSyncState {
         lastSuccessfulAt: lastSuccess ?? null,
         durationMs: last?.completed_at ? Date.parse(last.completed_at) - Date.parse(last.started_at) : null,
         observed: counts.observed, newObserved, imported: counts.imported, ignored: counts.ignored,
-        pending: counts.pending, lastError: last?.error_code ?? null };
+        pending: counts.pending, awaitingImport: counts.awaiting_import, inReview: counts.in_review,
+        cancelled: counts.cancelled, baselineExistingUnimported: counts.baseline_unimported,
+        lastError: last?.error_code ?? null };
     } finally { db.close(); }
   }
 

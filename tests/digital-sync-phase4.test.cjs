@@ -55,8 +55,10 @@ test("ciclo integrado exige dois interruptores, protege baseline e recupera comm
     assert.equal(candidate.category, "CANDIDATE");
     assert.equal(executeAuthorizedPlan(dbPath, candidate,
       { syncEnabled: true, writeEnabled: false, stateStore: state }).outcome, "DIGITAL_WRITE_DISABLED");
+    assert.equal(executeAuthorizedPlan(dbPath, candidate,
+      { syncEnabled: true, writeEnabled: true, stateStore: state }).outcome, "DIGITAL_CYCLE_BUDGET_REQUIRED");
     assert.equal(executeAuthorizedPlan(dbPath, { ...candidate, idFotoPedido: "baseline-id" },
-      { syncEnabled: true, writeEnabled: true, stateStore: state }).outcome,
+      { syncEnabled: true, writeEnabled: true, stateStore: state, cycleBudget: { limit: 1, imported: 0 } }).outcome,
     "BASELINE_EXISTING_UNIMPORTED");
     options.writeEnabled = true;
     const imported = await service().runCycle({ writeReports: false });
@@ -67,7 +69,8 @@ test("ciclo integrado exige dois interruptores, protege baseline e recupera comm
     const interrupted = await service().runDryRun({ writeReports: false });
     const secondPlan = interrupted.planned.find((row) => row.idFotoPedido === "new-id-2");
     assert.equal(executeAuthorizedPlan(dbPath, secondPlan,
-      { syncEnabled: true, writeEnabled: true, stateStore: state }).outcome, "IMPORTED");
+      { syncEnabled: true, writeEnabled: true, stateStore: state,
+        cycleBudget: { limit: 1, imported: 0 } }).outcome, "IMPORTED");
     // Simulate process exit before recordOutcome; the next cycle must reconcile the operational commit.
     const resumed = await service().runCycle({ writeReports: false });
     assert.equal(resumed.databaseWrites, 0);
@@ -136,4 +139,95 @@ test("dois ciclos não atravessam a trava entre processos", async () => {
     assert.equal((await first).databaseWrites, 0);
     assert.equal(state.inspect().observations, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("quatro ciclos preservam candidatos read-only, limite 1, baseline e reenvio", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "digital-phase7-cycles-"));
+  const dbPath = path.join(root, "gestao-logistica.sqlite3");
+  try {
+    database.initializeDataDirectory(root);
+    assert.equal(database.importSafeRows({ rows: [
+      { eligible: true, linha: 1, sessao: "M70011", clienteNome: "Sessão sintética compartilhada", fotosQuantidade: 2 }
+    ] }).imported, 1);
+    database.close();
+
+    const baseline = ["B1", "B2", "B3", "B4"].map((id, index) => meta(`baseline-${id}`, `BASE-${id}-${index}`));
+    const state = new DigitalSyncState(root);
+    state.importBaseline({ schema: 1, createdAt: observedAt, orders: baseline, pendingIds: [] },
+      { rows: baseline.map((row) => ({ idFotoPedido: row.idFotoPedido,
+        exclusive: "BASELINE_EXISTING_UNIMPORTED" })) });
+    const first = meta("phase7-1", "SYNTHETIC-PHASE7-1");
+    const second = { ...meta("phase7-2", "SYNTHETIC-PHASE7-2"), itens: 3 };
+    const listed = [first, second, ...baseline];
+    const options = { enabled: true, writeEnabled: false, maxImportsPerCycle: 1,
+      pageSize: 10, recentOrders: 10, maxScanPages: 2, pendingRecheckLimit: 10 };
+    const clientFactory = () => ({ authenticated: true, version: "synthetic", close() {},
+      listOrders: async () => ({ orders: listed, totalRegistros: listed.length }),
+      getOrderDetail: async (row) => ({ classification: "CANDIDATO",
+        itensInformados: row.idFotoPedido === second.idFotoPedido ? 3 : 2,
+        fotosRetornadas: row.idFotoPedido === second.idFotoPedido ? 3 : 2,
+        arquivosInvalidos: 0, sessoes: [{ sessao: "M70011", arquivos: 2 }] }) });
+    const service = () => new DigitalSyncService({ dbPath, dataDir: root,
+      outputDir: path.join(root, "reports"), options, clientFactory, stateStore: state });
+    const cycle1 = await service().runCycle({ writeReports: false });
+    assert.equal(cycle1.databaseWrites, 0);
+    assert.equal(state.status().awaitingImport, 2);
+    const firstSeenBeforeImport = state.loadSnapshot().knownOrders.find((row) => row.idFotoPedido === first.idFotoPedido);
+    assert.equal(firstSeenBeforeImport.status, "0");
+    const auxiliaryBeforeWrite = new DatabaseSync(state.file, { readOnly: true });
+    const firstSeenAt = auxiliaryBeforeWrite.prepare("SELECT first_seen_at FROM observations WHERE id_foto_pedido=?")
+      .get(first.idFotoPedido).first_seen_at;
+    auxiliaryBeforeWrite.close();
+    const operationalBeforeWrite = new DatabaseSync(dbPath, { readOnly: true });
+    assert.equal(operationalBeforeWrite.prepare("SELECT COUNT(*) n FROM digital_envios").get().n, 0);
+    operationalBeforeWrite.close();
+    assert.equal(state.status().baselineExistingUnimported, 4);
+    const auxiliaryAfter = new DatabaseSync(state.file, { readOnly: true });
+    assert.equal(auxiliaryAfter.prepare("SELECT first_seen_at FROM observations WHERE id_foto_pedido=?")
+      .get(first.idFotoPedido).first_seen_at, firstSeenAt);
+    auxiliaryAfter.close();
+    assert.equal(cycle1.planned.filter((row) => row.category === "BASELINE_EXISTING_UNIMPORTED").length, 4);
+
+    options.writeEnabled = true;
+    const cycle2 = await service().runCycle({ writeReports: false });
+    assert.equal(cycle2.databaseWrites, 1);
+    assert.equal(cycle2.outcomes[0].outcome, "IMPORTED");
+    assert.ok(cycle2.outcomes.some((row) => row.idFotoPedido === second.idFotoPedido
+      && row.outcome === "IMPORT_LIMIT_REACHED"));
+    assert.equal(state.status().awaitingImport, 1);
+
+    const cycle3 = await service().runCycle({ writeReports: false });
+    assert.equal(cycle3.databaseWrites, 1);
+    assert.equal(cycle3.outcomes[0].outcome, "IMPORTED");
+    assert.equal(cycle3.planned.find((row) => row.idFotoPedido === second.idFotoPedido).category,
+      "CANDIDATE_UNDER_TOTAL");
+
+    const cycle4 = await service().runCycle({ writeReports: false });
+    assert.equal(cycle4.databaseWrites, 0);
+    assert.equal(cycle4.outcomes.length, 0);
+    assert.equal(state.status().awaitingImport, 0);
+    assert.equal(state.status().imported, 2);
+    assert.equal(state.status().baselineExistingUnimported, 4);
+
+    database.initializeDataDirectory(root);
+    const shipments = database.listDigitalShipments({ page: 1, pageSize: 20 }).rows;
+    const a = shipments.find((row) => row.numero_pedido_digital === first.numeroPedido);
+    const b = shipments.find((row) => row.numero_pedido_digital === second.numeroPedido);
+    assert.ok(a && b);
+    assert.equal(a.itens_digital, 2);
+    assert.equal(b.itens_digital, 3);
+    assert.equal(database.getDigitalShipment(b.id).items[0].quantidade_enviada, 2);
+    assert.equal(database.getDigitalShipment(a.id).items[0].sessao, "M70011");
+    assert.equal(database.getDigitalShipment(b.id).items[0].sessao, "M70011");
+    database.close();
+    const verify = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.equal(verify.prepare("SELECT COUNT(*) n FROM digital_envios").get().n, 2);
+      assert.equal(verify.prepare("SELECT COUNT(*) n FROM digital_envio_eventos WHERE acao='digital_sync_created' AND usuario_id IS NULL").get().n, 2);
+      assert.equal(verify.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.equal(verify.prepare("PRAGMA foreign_key_check").all().length, 0);
+    } finally { verify.close(); }
+    assert.equal(state.loadSnapshot().knownOrders.find((row) => row.idFotoPedido === first.idFotoPedido)
+      .numeroPedido, first.numeroPedido);
+  } finally { database.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

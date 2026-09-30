@@ -5,7 +5,9 @@ const { digitalOptions } = require("./integrations/digital/sigi-config.cjs");
 
 const DIGITAL_CONFIG_KEYS = ["DIGITAL_SYNC_ENABLED", "DIGITAL_SYNC_WRITE_ENABLED",
   "DIGITAL_SYNC_INTERVAL_MINUTES", "DIGITAL_SYNC_RECENT_ORDERS",
-  "DIGITAL_SYNC_MAX_SCAN_PAGES", "DIGITAL_SYNC_REQUEST_DELAY_MS"];
+  "DIGITAL_SYNC_MAX_SCAN_PAGES", "DIGITAL_SYNC_REQUEST_DELAY_MS",
+  "DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE"];
+const LEGACY_DIGITAL_CONFIG_KEYS = DIGITAL_CONFIG_KEYS.slice(0, -1);
 
 function loadDigitalSyncConfig(dataDirectory) {
   const file = path.join(dataDirectory, "digital-sync.config.json");
@@ -14,8 +16,11 @@ function loadDigitalSyncConfig(dataDirectory) {
   try { configured = JSON.parse(fs.readFileSync(file, "utf8")); }
   catch { throw new Error("DIGITAL_CONFIG_ERROR"); }
   if (!configured || typeof configured !== "object" || Array.isArray(configured)
-    || Object.keys(configured).length !== DIGITAL_CONFIG_KEYS.length
-    || DIGITAL_CONFIG_KEYS.some((key) => typeof configured[key] !== "string"))
+    || ![LEGACY_DIGITAL_CONFIG_KEYS.length, DIGITAL_CONFIG_KEYS.length].includes(Object.keys(configured).length)
+    || Object.keys(configured).some((key) => !DIGITAL_CONFIG_KEYS.includes(key))
+    || LEGACY_DIGITAL_CONFIG_KEYS.some((key) => typeof configured[key] !== "string")
+    || (configured.DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE !== undefined
+      && typeof configured.DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE !== "string"))
     throw new Error("DIGITAL_CONFIG_ERROR");
   if (!["true", "false"].includes(configured.DIGITAL_SYNC_ENABLED)
     || !["true", "false"].includes(configured.DIGITAL_SYNC_WRITE_ENABLED))

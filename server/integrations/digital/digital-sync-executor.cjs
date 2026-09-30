@@ -100,14 +100,24 @@ function executeOnTemporaryCopy(dbPath, plan, options) {
 }
 
 function executeAuthorizedPlan(dbPath, plan, { syncEnabled = false, writeEnabled = false,
-  stateStore = null } = {}) {
+  stateStore = null, cycleBudget = null } = {}) {
   if (syncEnabled !== true || writeEnabled !== true)
     return { outcome: "DIGITAL_WRITE_DISABLED" };
+  if (!cycleBudget) return { outcome: "DIGITAL_CYCLE_BUDGET_REQUIRED" };
+  if (!Number.isSafeInteger(cycleBudget.limit) || cycleBudget.limit < 1
+    || !Number.isSafeInteger(cycleBudget.imported) || cycleBudget.imported < 0)
+    return { outcome: "DIGITAL_CONFIG_ERROR" };
+  if (cycleBudget.imported >= cycleBudget.limit)
+    return { outcome: "IMPORT_LIMIT_REACHED" };
   if (!stateStore || !plan?.idFotoPedido || stateStore.isBaselineOrder(plan.idFotoPedido))
     return { outcome: "BASELINE_EXISTING_UNIMPORTED" };
   const target = fs.realpathSync(path.resolve(dbPath));
   const db = new DatabaseSync(target);
-  try { return applyPlan(db, plan); }
+  try {
+    const result = applyPlan(db, plan);
+    if (result.outcome === "IMPORTED" && cycleBudget) cycleBudget.imported++;
+    return result;
+  }
   finally { db.close(); }
 }
 

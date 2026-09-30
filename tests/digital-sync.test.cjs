@@ -30,10 +30,12 @@ const dbState = (existing = []) => ({ sessions: new Map([["M50255", "p1"]]),
 test("configuração nasce desabilitada e bloqueia versão inesperada", async () => {
   assert.equal(digitalOptions({}).enabled, false);
   assert.equal(digitalOptions({}).writeEnabled, false);
+  assert.equal(digitalOptions({}).maxImportsPerCycle, 1);
   assert.equal(digitalOptions({ DIGITAL_SYNC_WRITE_ENABLED: "true" }).enabled, false);
   assert.equal(digitalOptions({ DIGITAL_SYNC_ENABLED: "true" }).writeEnabled, false);
   assert.equal(digitalOptions({}).recentOrders, 50);
   assert.throws(() => digitalOptions({ DIGITAL_SYNC_MAX_SCAN_PAGES: "0" }), /DIGITAL_CONFIG_ERROR/);
+  assert.throws(() => digitalOptions({ DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE: "0" }), /DIGITAL_CONFIG_ERROR/);
   const fetcher = async (url) => new Response(JSON.stringify(String(url).includes("sigi-config")
     ? { Zid: "synthetic" } : { versaoWS: "../../evil" }), { status: 200 });
   await assert.rejects(discoverSigiConfiguration(fetcher), /DIGITAL_CONFIG_ERROR/);

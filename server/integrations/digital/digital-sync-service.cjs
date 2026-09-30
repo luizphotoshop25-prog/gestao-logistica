@@ -187,11 +187,12 @@ class DigitalSyncService {
       completedScanRunId = result.complete ? result.runId : null;
       const outcomes = [];
       if (this.options.writeEnabled === true && result.complete) {
+        const cycleBudget = { limit: this.options.maxImportsPerCycle ?? 1, imported: 0 };
         for (const plan of result.planned) {
           if (!["CANDIDATE", "CANDIDATE_UNDER_TOTAL"].includes(plan.category)) continue;
           const outcome = executeAuthorizedPlan(this.dbPath, plan, {
             syncEnabled: this.options.enabled, writeEnabled: this.options.writeEnabled,
-            stateStore: this.stateStore });
+            stateStore: this.stateStore, cycleBudget });
           this.stateStore.recordOutcome(plan.idFotoPedido, outcome.outcome);
           outcomes.push({ idFotoPedido: plan.idFotoPedido, outcome: outcome.outcome });
         }

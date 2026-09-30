@@ -21,7 +21,8 @@ async function main() {
   let api;
   let step = "startup";
   try {
-    const config = { enabled: false, writeEnabled: false, intervalMinutes: 30, timeoutMs: 120000 };
+    const config = { enabled: false, writeEnabled: false, intervalMinutes: 30,
+      maxImportsPerCycle: 1, timeoutMs: 120000 };
     api = await startApiServer({ dataDirectory: root, host: "127.0.0.1", port,
       lanPilot: true, digitalSyncConfig: config });
     step = "first request";
@@ -53,9 +54,13 @@ async function main() {
     assert.equal(status.enabled, false);
     assert.equal(status.writeEnabled, false);
     assert.equal(status.intervalMinutes, 30);
+    assert.equal(status.maxImportsPerCycle, 1);
     assert.equal(status.nextRunAt, null);
     assert.equal(status.state.observed, 1);
     assert.equal(status.state.newObserved, 0);
+    assert.equal(status.state.awaitingImport, 0);
+    assert.equal(status.state.inReview, 0);
+    assert.equal(status.state.baselineExistingUnimported, 0);
     assert.equal(status.state.lastSuccessfulAt, "2026-09-30T13:53:11.628Z");
     assert.equal(JSON.stringify(status).includes(password), false);
     await api.close(); api = null;

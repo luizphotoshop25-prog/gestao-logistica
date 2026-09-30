@@ -4,19 +4,27 @@ O serviço é exclusivo do backend. `DIGITAL_SYNC_ENABLED` e
 `DIGITAL_SYNC_WRITE_ENABLED` são independentes e ambos começam `false`.
 No piloto LAN, `server/lan-server.cjs` lê a configuração persistente em
 `GESTAO_SERVER_DATA/digital-sync.config.json` quando o arquivo existe. Ele exige
-as seis chaves `DIGITAL_SYNC_ENABLED`, `DIGITAL_SYNC_WRITE_ENABLED`,
+as sete chaves `DIGITAL_SYNC_ENABLED`, `DIGITAL_SYNC_WRITE_ENABLED`,
 `DIGITAL_SYNC_INTERVAL_MINUTES`, `DIGITAL_SYNC_RECENT_ORDERS`,
-`DIGITAL_SYNC_MAX_SCAN_PAGES` e `DIGITAL_SYNC_REQUEST_DELAY_MS`, todas como
+`DIGITAL_SYNC_MAX_SCAN_PAGES`, `DIGITAL_SYNC_REQUEST_DELAY_MS` e
+`DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE`, todas como
 strings. O arquivo prevalece sobre variáveis de ambiente herdadas pelo
 iniciador e é relido a cada inicialização da API. Não contém credenciais.
+Arquivos antigos com as seis opções anteriores continuam válidos e recebem o
+limite seguro padrão de uma importação por ciclo.
 Para interromper a sincronização, defina os dois interruptores como `"false"`
 nesse arquivo e execute `scripts/restart-pilot-api.ps1` como administrador.
 Isso preserva o baseline, as pendências, os envios e a credencial DPAPI.
 Com o primeiro desligado, nenhum ciclo inicia, mesmo que o segundo seja `true`.
 Com apenas o primeiro ligado, o ciclo consulta e planeja sem escrever envios.
 Somente ambos `true` permitem o executor, que verifica os dois interruptores
-internamente e recusa IDs observados no baseline inicial. Nesta fase os dois
-continuam desligados no servidor real. A execução explícita `npm run digital-sync:dry-run` usa
+internamente e recusa IDs observados no baseline inicial. No servidor real, a
+leitura permanece ligada (`DIGITAL_SYNC_ENABLED=true`) e a escrita desligada
+(`DIGITAL_SYNC_WRITE_ENABLED=false`). O executor exige um orçamento de ciclo e
+bloqueia novas gravações ao atingir `DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE`; o valor
+preparado para a primeira ativação autorizada é `1`. `IMPORT_LIMIT_REACHED`
+mantém o candidato em `READY` para o próximo ciclo. A execução explícita
+`npm run digital-sync:dry-run` usa
 `GESTAO_SERVER_DATA` para localizar o SQLite central e abre o banco em modo
 read-only com `query_only`.
 

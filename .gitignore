@@ -3,6 +3,7 @@ dist/
 release/
 release-updater-localdist/
 release-updater-*/
+phase07-validation/
 data/
 work/
 *.log

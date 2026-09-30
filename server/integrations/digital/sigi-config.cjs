@@ -15,6 +15,7 @@ function digitalOptions(env = process.env) {
     intervalMinutes: integer("DIGITAL_SYNC_INTERVAL_MINUTES", 30, 1, 1440),
     recentOrders: integer("DIGITAL_SYNC_RECENT_ORDERS", 50, 1, 500),
     maxScanPages: integer("DIGITAL_SYNC_MAX_SCAN_PAGES", 4, 1, 20),
+    maxImportsPerCycle: integer("DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE", 1, 1, 100),
     requestDelayMs: integer("DIGITAL_SYNC_REQUEST_DELAY_MS", 500, 0, 5000),
     timeoutMs: integer("DIGITAL_SYNC_TIMEOUT_MS", 120000, 1000, 3600000),
     pageSize: 25

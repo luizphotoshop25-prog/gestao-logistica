@@ -36,9 +36,15 @@ export function DigitalShipmentsPage({ currentUser, onOpenOrder }: { currentUser
   const [notice, setNotice] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
+  const loadingRef = useRef(false);
+  const pageRef = useRef(page);
+  const lastRefreshAtRef = useRef(0);
+  pageRef.current = page;
 
   const load = useCallback(async (nextPage = 1) => {
     const requestId = ++requestRef.current;
+    loadingRef.current = true;
+    lastRefreshAtRef.current = Date.now();
     setLoading(true);
     setError("");
     try {
@@ -50,7 +56,10 @@ export function DigitalShipmentsPage({ currentUser, onOpenOrder }: { currentUser
     } catch (cause) {
       if (requestId === requestRef.current) setError(cause instanceof Error ? cause.message : "Não foi possível carregar os envios.");
     } finally {
-      if (requestId === requestRef.current) setLoading(false);
+      if (requestId === requestRef.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
     }
   }, [search, from, to, sort]);
 
@@ -59,7 +68,28 @@ export function DigitalShipmentsPage({ currentUser, onOpenOrder }: { currentUser
     return () => window.clearTimeout(timer);
   }, [load, search, from, to, sort]);
 
+  useEffect(() => {
+    if (formShipment !== undefined) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "visible" || loadingRef.current
+        || Date.now() - lastRefreshAtRef.current < 1000) return;
+      void load(pageRef.current);
+    };
+    const timer = window.setInterval(refreshWhenVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
+    };
+  }, [formShipment, load]);
+
   useEffect(() => { searchRef.current?.focus(); }, []);
+  useEffect(() => () => {
+    requestRef.current++;
+    loadingRef.current = false;
+  }, []);
 
   const openShipment = async (shipmentId: string) => {
     setError("");
