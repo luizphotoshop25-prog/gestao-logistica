@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
+const sourcePackage = require("../package.json");
 
 const project = path.join(__dirname, "..");
 function loadConfig(overrides = {}) {
@@ -29,7 +30,9 @@ assert.deepEqual({
   packElevateHelper: defaults.nsis.packElevateHelper,
   deleteAppDataOnUninstall: defaults.nsis.deleteAppDataOnUninstall,
 }, { include: "build/installer.nsh", oneClick: true, perMachine: false, runAfterFinish: true, packElevateHelper: true, deleteAppDataOnUninstall: false }, "installer must remain per-user, one-click, and preserve app data");
-assert.equal(defaults.version, "0.1.13");
+assert.equal(defaults.version, sourcePackage.version);
+assert.ok(defaults.files.includes("electron/bootstrap.cjs"), "the packaged app must start through the recovery bootstrap");
+assert.ok(defaults.files.includes("electron/digital-shipment-write.cjs"), "the packaged app must include the shipment write module");
 assert.ok(defaults.files.includes("electron/digital-quantities-migration.cjs"), "the packaged app must include the runtime SQLite migration module");
 const installerInit = fs.readFileSync(path.join(project, "build/installer.nsh"), "utf8");
 assert.match(installerInit, /\$\{if\}\s+\$\{isUpdated\}[\s\S]*SetSilent silent/, "legacy auto-update launches must become silent before NSIS pages");

@@ -23,9 +23,10 @@ function createUpdaterController({ app, autoUpdater, resourcesPath, send = () =>
   let downloadInFlight = false;
   let updateDownloaded = false;
 
+  let sendState = send;
   const setState = (next) => {
     state = next;
-    try { send({ ...state }); } catch { /* A renderer can close while an update event arrives. */ }
+    try { sendState({ ...state }); } catch { /* A renderer can close while an update event arrives. */ }
   };
   const onError = (error) => {
     const message = String(error?.message || "Falha no serviço de atualização.").slice(0, 300);
@@ -96,6 +97,10 @@ function createUpdaterController({ app, autoUpdater, resourcesPath, send = () =>
   return {
     enabled,
     getState: () => ({ ...state }),
+    setSend: (next) => {
+      sendState = typeof next === "function" ? next : () => {};
+      try { sendState({ ...state }); } catch { /* A renderer can close while an update event arrives. */ }
+    },
     checkSilently,
     download,
     install,

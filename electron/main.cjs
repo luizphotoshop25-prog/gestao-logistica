@@ -12,6 +12,7 @@ const { checkRemoteApiHealth, resolveRemoteConfig } = require("./remote-config.c
 const { loadClientBuild } = require("./client-build.cjs");
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
+const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 
 const buildMarker = loadClientBuild({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
 const remoteClientBuild = buildMarker.variant === "remote";
@@ -289,14 +290,15 @@ app.whenReady().then(async () => {
   registerSessionIpc();
   registerIpc();
   registerUpdaterIpc();
-  updaterController = createUpdaterController({
+  updaterController = globalThis[UPDATER_KEY] || createUpdaterController({
     app,
     autoUpdater,
     resourcesPath: process.resourcesPath,
-    send: (state) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
-    },
     logError: writeUpdaterLog,
+  });
+  globalThis[UPDATER_KEY] = updaterController;
+  updaterController.setSend?.((state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
   });
   createWindow();
   setTimeout(() => { void updaterController.checkSilently(); }, 10000);
@@ -307,6 +309,10 @@ app.whenReady().then(async () => {
   }, 1500);
   siwinTimer = setInterval(() => void runSiwinSync(), 2 * 60 * 1000);
   thunderbirdTimer = setInterval(() => void runThunderbirdSync(), 2 * 60 * 1000);
+}).catch((error) => {
+  const recover = globalThis[Symbol.for("gestao-logistica.show-recovery")];
+  if (typeof recover === "function") recover(error);
+  else throw error;
 });
 
 app.on("window-all-closed", () => {

@@ -35,6 +35,8 @@ async function main() {
   assert.equal(await treatmentAssigneeUpdater.isUpdateAvailable({ version: "0.1.9" }), false, "identical v0.1.9 builds must not be offered as an update");
   const digitalQuantitiesUpdater = new AppUpdater(null, { version: "0.1.11" });
   assert.equal(await digitalQuantitiesUpdater.isUpdateAvailable({ version: "0.1.12" }), true, "installed v0.1.11 must detect the Digital quantities patch");
+  const brokenClientUpdater = new AppUpdater(null, { version: "0.1.12" });
+  assert.equal(await brokenClientUpdater.isUpdateAvailable({ version: "0.1.14" }), true, "installed v0.1.12 must detect the hotfix release v0.1.14");
   try {
     const resources = path.join(root, "resources");
     fs.mkdirSync(resources);
@@ -100,7 +102,7 @@ async function main() {
     assert.equal((await failed.download()).ok, false);
     assert.deepEqual(failed.getState(), { status: "error", message: "Não foi possível baixar a atualização. O sistema continua disponível." });
     assert.equal(failed.install().ok, false);
-    console.log("Auto-update: SemVer 0.1.11→0.1.12, versões repetidas, modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
+    console.log("Auto-update: v0.1.12 detecta v0.1.14; modo dev, check silencioso, disponibilidade, erro, progresso, download e reinício explícito aprovados.");
   } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
 
