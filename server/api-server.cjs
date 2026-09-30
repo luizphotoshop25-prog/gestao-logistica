@@ -179,6 +179,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
         }
         return sendJson(response, 200, { ok: true, enabled: digitalSyncConfig.enabled === true,
           writeEnabled: digitalSyncConfig.writeEnabled === true,
+          intervalMinutes: digitalSyncConfig.intervalMinutes,
           nextRunAt: syncScheduler?.nextDueAt() ?? null, state, stateError }, responseOrigin);
       }
       if (request.method === "GET" && url.pathname === "/api/solicitations/assignees") {

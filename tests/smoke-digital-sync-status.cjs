@@ -52,8 +52,10 @@ async function main() {
     const status = await response.json();
     assert.equal(status.enabled, false);
     assert.equal(status.writeEnabled, false);
+    assert.equal(status.intervalMinutes, 30);
     assert.equal(status.nextRunAt, null);
     assert.equal(status.state.observed, 1);
+    assert.equal(status.state.newObserved, 0);
     assert.equal(status.state.lastSuccessfulAt, "2026-09-30T13:53:11.628Z");
     assert.equal(JSON.stringify(status).includes(password), false);
     await api.close(); api = null;

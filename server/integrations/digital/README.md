@@ -2,6 +2,16 @@
 
 O serviço é exclusivo do backend. `DIGITAL_SYNC_ENABLED` e
 `DIGITAL_SYNC_WRITE_ENABLED` são independentes e ambos começam `false`.
+No piloto LAN, `server/lan-server.cjs` lê a configuração persistente em
+`GESTAO_SERVER_DATA/digital-sync.config.json` quando o arquivo existe. Ele exige
+as seis chaves `DIGITAL_SYNC_ENABLED`, `DIGITAL_SYNC_WRITE_ENABLED`,
+`DIGITAL_SYNC_INTERVAL_MINUTES`, `DIGITAL_SYNC_RECENT_ORDERS`,
+`DIGITAL_SYNC_MAX_SCAN_PAGES` e `DIGITAL_SYNC_REQUEST_DELAY_MS`, todas como
+strings. O arquivo prevalece sobre variáveis de ambiente herdadas pelo
+iniciador e é relido a cada inicialização da API. Não contém credenciais.
+Para interromper a sincronização, defina os dois interruptores como `"false"`
+nesse arquivo e execute `scripts/restart-pilot-api.ps1` como administrador.
+Isso preserva o baseline, as pendências, os envios e a credencial DPAPI.
 Com o primeiro desligado, nenhum ciclo inicia, mesmo que o segundo seja `true`.
 Com apenas o primeiro ligado, o ciclo consulta e planeja sem escrever envios.
 Somente ambos `true` permitem o executor, que verifica os dois interruptores

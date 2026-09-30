@@ -305,10 +305,13 @@ class DigitalSyncState {
         SUM(CASE WHEN process_state IN ('PENDING','READY','REVIEW') THEN 1 ELSE 0 END) pending,
         SUM(CASE WHEN process_state IN ('BASELINE','CANCELLED','EXISTING') THEN 1 ELSE 0 END) ignored
         FROM observations`).get();
+      const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
+      const newObserved = db.prepare("SELECT COUNT(*) n FROM observations WHERE first_seen_at<>?")
+        .get(baselineAt).n;
       return { lastRunAt: last?.started_at ?? null, lastRunStatus: last?.status ?? null,
         lastSuccessfulAt: lastSuccess ?? null,
         durationMs: last?.completed_at ? Date.parse(last.completed_at) - Date.parse(last.started_at) : null,
-        observed: counts.observed, imported: counts.imported, ignored: counts.ignored,
+        observed: counts.observed, newObserved, imported: counts.imported, ignored: counts.ignored,
         pending: counts.pending, lastError: last?.error_code ?? null };
     } finally { db.close(); }
   }
