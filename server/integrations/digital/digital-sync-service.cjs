@@ -78,16 +78,25 @@ function writeDryRunReports(outputDir, result) {
   writeJson(path.join(outputDir, "dry-run.json"), report);
   writeJson(path.join(outputDir, "sync-diagnostics.json"), {
     mode: result.mode, possibleGap: result.scan.possibleGap,
-    pages: result.scan.pages, databaseWrites: 0,
+    pages: result.scan.pages, databaseWrites: 0, loginSucceeded: result.loginSucceeded,
+    sigiVersion: result.sigiVersion, durationMs: result.durationMs, apiErrors: 0,
     classifications: Object.fromEntries([...new Set(result.planned.map((p) => p.category))]
       .map((category) => [category, result.planned.filter((p) => p.category === category).length]))
   });
   fs.writeFileSync(path.join(outputDir, "dry-run.txt"), [
-    `Modo: ${result.mode}`, `Pedidos listados: ${result.scan.listed}`,
+    `Modo: ${result.mode}`, `Login realizado: ${result.loginSucceeded ? "sim" : "não"}`,
+    `Versão SIGI: ${result.sigiVersion || "desconhecida"}`,
+    `Pedidos listados: ${result.scan.listed}`,
     `Páginas: ${result.scan.pages}`, `Possível lacuna: ${result.scan.possibleGap ? "sim" : "não"}`,
-    `Planejados: ${result.planned.length}`, `Alterações no banco: 0`
+    `Já existentes: ${result.summary.existing}`, `Presentes no baseline: ${result.summary.baselineObserved}`,
+    `Novos observados: ${result.summary.newObserved}`, `Cancelados: ${result.summary.cancelled}`,
+    `Pendências: ${result.summary.pending}`, `Sessões ausentes: ${result.summary.missingSessions}`,
+    `Divergências de quantidade: ${result.summary.quantityDivergences}`,
+    `Planejados: ${result.planned.length}`, `Erros API: 0`,
+    `Tempo: ${result.durationMs} ms`, `Alterações no banco: 0`
   ].join("\n") + "\n");
-  if (!result.scan.possibleGap) writeJson(path.join(outputDir, "baseline-preview.json"), nextSnapshot);
+  if (!result.scan.possibleGap) writeJson(path.join(outputDir,
+    result.mode === "baseline" ? "baseline-preview.json" : "latest-snapshot-preview.json"), nextSnapshot);
 }
 
 class DigitalSyncService {
@@ -106,6 +115,7 @@ class DigitalSyncService {
   }
 
   async runDryRun({ snapshot = undefined, writeReports = true } = {}) {
+    const started = Date.now();
     const key = path.resolve(this.dbPath).toLowerCase();
     if (running.has(key)) throw new Error("DIGITAL_SYNC_BUSY");
     running.add(key);
@@ -118,8 +128,22 @@ class DigitalSyncService {
       client = this.clientFactory();
       const dbState = this.dbReader(this.dbPath);
       const previous = snapshot === undefined
-        ? loadSnapshot(path.join(this.outputDir, "baseline-preview.json")) : snapshot;
+        ? loadSnapshot(path.join(this.outputDir, "latest-snapshot-preview.json"))
+          || loadSnapshot(path.join(this.outputDir, "baseline-preview.json")) : snapshot;
       const result = await buildDryRun({ client, snapshot: previous, options: this.options, dbState });
+      result.loginSucceeded = client.authenticated === true;
+      result.sigiVersion = typeof client.version === "string" ? client.version : null;
+      result.durationMs = Date.now() - started;
+      result.apiErrors = 0;
+      result.summary = {
+        existing: result.planned.filter((p) => p.category === "EXISTING" || p.category === "BASELINE_EXISTING").length,
+        baselineObserved: result.scan.observedInBaseline,
+        newObserved: result.scan.newObserved,
+        cancelled: result.planned.filter((p) => p.category === "SKIP_CANCELLED").length,
+        pending: result.planned.filter((p) => p.category.startsWith("PENDING_")).length,
+        missingSessions: result.planned.reduce((count, p) => count + (p.missingSessions?.length || 0), 0),
+        quantityDivergences: result.planned.filter((p) => /QUANTITY|OVER_TOTAL|ITEM_PHOTO/.test(p.category)).length
+      };
       if (writeReports) writeDryRunReports(this.outputDir, result);
       return result;
     } catch (error) { throw new Error(safeError(error)); }

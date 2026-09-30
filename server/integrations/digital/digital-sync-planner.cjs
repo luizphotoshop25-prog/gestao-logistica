@@ -24,6 +24,7 @@ function readDatabaseState(dbPath) {
 function makeSnapshot(listing, pendingIds = []) {
   return { schema: 1, createdAt: new Date().toISOString(),
     orders: listing.map((o) => ({ idFotoPedido: String(o.idFotoPedido), numeroPedido: String(o.numeroPedido),
+      dataPedidoMiliegundos: o.dataPedidoMiliegundos ?? null,
       status: String(o.status), descricaoStatus: String(o.descricaoStatus), itens: o.itens })),
     pendingIds: [...new Set(pendingIds.map(String))] };
 }
@@ -45,7 +46,9 @@ function planDetail(meta, detail, dbState) {
   }
   const base = { numeroPedido: number, idFotoPedido: String(meta.idFotoPedido),
     itensDigital: total, fotosRetornadas: photos, arquivosInvalidos: detail.arquivosInvalidos,
-    relations: found, missingSessions: missing };
+    relations: found, missingSessions: missing,
+    quantityClassification: total === null ? "UNKNOWN" : recognized > total ? "OVER_TOTAL"
+      : recognized < total ? "UNDER_TOTAL" : "MATCH" };
   if (total === null || photos === null) return { ...base, category: "REVIEW_QUANTITY_UNKNOWN" };
   if (total !== photos) return { ...base, category: "REVIEW_ITEM_PHOTO_MISMATCH" };
   if (recognized > total) return { ...base, category: "REVIEW_OVER_TOTAL" };
@@ -109,7 +112,9 @@ async function buildDryRun({ client, snapshot, options, dbState }) {
   const nextSnapshot = makeSnapshot(scan.orders, pendingIds);
   return { mode: snapshot ? "incremental" : "baseline", scan: {
     listed: scan.orders.length, pages: scan.pages, available: scan.available,
-    overlap: scan.overlap, possibleGap: scan.gap, reachedPageLimit: scan.reachedPageLimit },
+    overlap: scan.overlap, possibleGap: scan.gap, reachedPageLimit: scan.reachedPageLimit,
+    observedInBaseline: snapshot ? scan.orders.filter((order) => prior.has(identity(order))).length : scan.orders.length,
+    newObserved: snapshot ? scan.orders.filter((order) => !prior.has(identity(order))).length : 0 },
     planned, changes, nextSnapshot, databaseCounts: dbState.counts, databaseWrites: 0,
     complete: !scan.gap };
 }

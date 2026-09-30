@@ -5,11 +5,12 @@ const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { test } = require("node:test");
+const { spawn } = require("node:child_process");
 const { digitalOptions, discoverSigiConfiguration } = require("../server/integrations/digital/sigi-config.cjs");
 const { SigiClient, redact, decode } = require("../server/integrations/digital/sigi-client.cjs");
 const { loadCredential, saveCredential, credentialPath } = require("../server/integrations/digital/credential-store.cjs");
 const { buildDryRun, makeSnapshot, planDetail, readDatabaseState, scanRecent } = require("../server/integrations/digital/digital-sync-planner.cjs");
-const { DigitalSyncService } = require("../server/integrations/digital/digital-sync-service.cjs");
+const { DigitalSyncService, writeDryRunReports } = require("../server/integrations/digital/digital-sync-service.cjs");
 
 const wrapper = (object, extra = {}, status = 200) => new Response(JSON.stringify(JSON.stringify({
   Status: 0, Zid: "z-test", Chave: "key-test", DadosRepositorioSerializado: "repo-test", ObjetoRetorno: object, ...extra
@@ -141,12 +142,34 @@ test("pendência reconsiderada, reenvio legítimo, UNDER/OVER e divergência 112
   assert.equal(planDetail(meta(11, "118699"), detail("118699"), dbState()).category, "CANDIDATE");
   const under = { ...detail("118700"), itensInformados: 2, fotosRetornadas: 2 };
   assert.equal(planDetail(order, under, dbState()).category, "CANDIDATE_UNDER_TOTAL");
+  assert.equal(planDetail(order, under, dbState()).quantityClassification, "UNDER_TOTAL");
   const over = { ...detail("118700"), itensInformados: 1, fotosRetornadas: 1,
     sessoes: [{ sessao: "M50255", arquivos: 2 }] };
   assert.equal(planDetail(order, over, dbState()).category, "REVIEW_OVER_TOTAL");
+  assert.equal(planDetail(order, over, dbState()).quantityClassification, "OVER_TOTAL");
   const divergent = { ...detail("112097"), itensInformados: 100, fotosRetornadas: 1 };
   assert.equal(planDetail(meta(12, "112097"), divergent, dbState()).category, "REVIEW_ITEM_PHOTO_MISMATCH");
   assert.equal(planDetail(order, { ...detail("118700"), sessoes: [], arquivosInvalidos: 1 }, dbState()).category, "PENDING_NO_SESSION");
+  assert.equal(planDetail(order, detail("118700"), dbState()).quantityClassification, "MATCH");
+  assert.equal(planDetail(order, { ...detail("118700"), itensInformados: null }, dbState()).quantityClassification, "UNKNOWN");
+  const multi = { ...detail("118700"), itensInformados: 2, fotosRetornadas: 2,
+    sessoes: [{ sessao: "M50255", arquivos: 1 }, { sessao: "M50261", arquivos: 1 }] };
+  assert.equal(planDetail(order, multi, nowPresent).relations.length, 2);
+});
+
+test("baseline inicial não é substituído pelo snapshot incremental", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "digital-sync-baseline-"));
+  const makeReport = (mode, snapshot) => ({ mode, scan: { listed: 1, pages: 1, possibleGap: false },
+    planned: [], nextSnapshot: snapshot, summary: { existing: 0, baselineObserved: 1,
+      newObserved: 0, cancelled: 0, pending: 0, missingSessions: 0, quantityDivergences: 0 },
+    loginSucceeded: true, sigiVersion: "1.2.3.4", durationMs: 1 });
+  try {
+    writeDryRunReports(dir, makeReport("baseline", makeSnapshot([meta(1, "OLD")])));
+    const before = fs.readFileSync(path.join(dir, "baseline-preview.json"), "utf8");
+    writeDryRunReports(dir, makeReport("incremental", makeSnapshot([meta(2, "NEW")])));
+    assert.equal(fs.readFileSync(path.join(dir, "baseline-preview.json"), "utf8"), before);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "latest-snapshot-preview.json"))).orders[0].numeroPedido, "NEW");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("janela sem sobreposição sinaliza lacuna e limita páginas", async () => {
@@ -241,4 +264,46 @@ test("DPAPI protege fixture sintética no Windows", { skip: process.platform !==
     const value = await loadCredential(dir);
     assert.equal(value.password, "synthetic-only");
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("provisionador local exige Origin e CSRF e grava só DPAPI", { skip: process.platform !== "win32" }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "digital-provision-ui-"));
+  const child = spawn(process.execPath, [path.resolve("scripts/provision-digital-credential-local.cjs")], {
+    cwd: path.resolve("."), env: { ...process.env, GESTAO_SERVER_DATA: dir,
+      DIGITAL_PROVISION_LOGIN: "fixture@example.invalid" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true
+  });
+  try {
+    const origin = await new Promise((resolve, reject) => {
+      let output = "";
+      const timeout = setTimeout(() => reject(new Error("provisioner timeout")), 10000);
+      child.stdout.on("data", (chunk) => {
+        output += chunk.toString("utf8");
+        const match = output.match(/DIGITAL_PROVISION_URL=(http:\/\/127\.0\.0\.1:\d+\/)/);
+        if (match) { clearTimeout(timeout); resolve(match[1]); }
+      });
+      child.once("exit", (code) => { clearTimeout(timeout); reject(new Error(`provisioner exited ${code}`)); });
+    });
+    const page = await fetch(origin);
+    const html = await page.text();
+    const token = html.match(/name="csrf" value="([a-f0-9]+)"/)?.[1];
+    const cookie = page.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(token && cookie);
+    const body = new URLSearchParams({ csrf: token, password: "synthetic-only" });
+    const bad = await fetch(new URL("provision", origin), { method: "POST", headers: {
+      Origin: "http://evil.invalid", Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded"
+    }, body });
+    assert.equal(bad.status, 403);
+    const opaqueCrossSite = await fetch(new URL("provision", origin), { method: "POST", headers: {
+      Origin: "null", "Sec-Fetch-Site": "cross-site", Cookie: cookie,
+      "Content-Type": "application/x-www-form-urlencoded"
+    }, body });
+    assert.equal(opaqueCrossSite.status, 403);
+    const good = await fetch(new URL("provision", origin), { method: "POST", headers: {
+      Origin: "null", "Sec-Fetch-Site": "same-origin", Cookie: cookie,
+      "Content-Type": "application/x-www-form-urlencoded"
+    }, body });
+    assert.equal(good.status, 200);
+    assert.equal(fs.readFileSync(credentialPath(dir), "utf8").includes("synthetic-only"), false);
+    assert.equal((await loadCredential(dir)).password, "synthetic-only");
+  } finally { child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

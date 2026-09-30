@@ -35,6 +35,7 @@ class SigiClient {
     this.discover = discover;
     this.state = null;
     this.baseUrl = null;
+    this.version = null;
     this.authenticated = false;
     this.lastRequestAt = 0;
     this.credentials = null;
@@ -104,6 +105,7 @@ class SigiClient {
     try {
       const config = await this.discover(this.fetchImpl, this.timeoutMs);
       this.baseUrl = config.baseUrl;
+      this.version = config.version || null;
       this.state = { Zid: config.zid, Chave: "", DadosRepositorioSerializado: "" };
       await this.post("App/ObterViewModel");
       if (!this.state.Chave || !this.state.DadosRepositorioSerializado) throw coded("DIGITAL_BOOTSTRAP_ERROR");

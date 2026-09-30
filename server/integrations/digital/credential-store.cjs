@@ -39,6 +39,18 @@ async function dpapi(mode, input) {
   });
 }
 
+async function restrictCredentialFile(file) {
+  const sid = require("node:child_process").execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"],
+    { encoding: "utf8", windowsHide: true }).trim().match(/S-1-5-[0-9-]+/i)?.[0];
+  if (!sid) throw new Error("DIGITAL_CREDENTIAL_STORE_ERROR");
+  await new Promise((resolve, reject) => {
+    const child = spawn("icacls.exe", [file, "/inheritance:r", "/grant:r", `*${sid}:F`,
+      "/grant:r", "*S-1-5-18:F"], { windowsHide: true, stdio: "ignore" });
+    child.on("error", () => reject(new Error("DIGITAL_CREDENTIAL_STORE_ERROR")));
+    child.on("close", (code) => code === 0 ? resolve() : reject(new Error("DIGITAL_CREDENTIAL_STORE_ERROR")));
+  });
+}
+
 function credentialPath(dataDir) {
   if (!path.isAbsolute(dataDir)) throw new Error("DIGITAL_CONFIG_ERROR");
   return path.join(dataDir, FILE_NAME);
@@ -55,6 +67,7 @@ async function saveCredential(dataDir, credential) {
   const temporary = `${target}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(temporary, protectedText, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await restrictCredentialFile(temporary);
     fs.renameSync(temporary, target);
   } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true }); }
 }
