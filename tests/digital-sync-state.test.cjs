@@ -49,6 +49,18 @@ test("baseline é importado atomicamente, preserva observação e é idempotente
   finally { db.close(); }
 }));
 
+test("ausentes do primeiro baseline são classificados após backup íntegro", async () => withStore(async (store) => {
+  store.importBaseline(baseline(), reconcileBaseline(baseline(), dbState));
+  const result = await store.classifyBaselineUnimported();
+  assert.equal(result.changed, 1);
+  assert.equal(fs.existsSync(result.backupPath), true);
+  assert.equal((await store.classifyBaselineUnimported()).changed, 0);
+  const db = new DatabaseSync(store.file, { readOnly: true });
+  try { assert.equal(db.prepare("SELECT classification FROM observations WHERE id_foto_pedido='c'").get()
+    .classification, "BASELINE_EXISTING_UNIMPORTED"); }
+  finally { db.close(); }
+}));
+
 test("duplicatas e conflito não substituem baseline existente", async () => withStore((store) => {
   const source = baseline();
   assert.throws(() => store.importBaseline({ ...source, orders: [...source.orders, source.orders[0]] }),
@@ -127,6 +139,17 @@ test("pedido observado antes da janela atual não vira novidade ao reaparecer", 
     getOrderDetail: async () => { throw Error("already observed order must not request detail"); } } });
   assert.equal(result.scan.newObserved, 0);
 });
+
+test("pedido ausente do baseline nunca se torna candidato automático", async () => withStore(async (store) => {
+  store.importBaseline(baseline(), reconcileBaseline(baseline(), dbState));
+  const result = await buildDryRun({ snapshot: store.loadSnapshot(),
+    options: { pageSize: 3, recentOrders: 3, maxScanPages: 1 },
+    dbState: { existing: new Map(), sessions: new Map(), revisions: new Map(), counts: {} },
+    client: { listOrders: async () => ({ orders: baseline().orders, totalRegistros: 3 }),
+      getOrderDetail: async () => { throw Error("baseline must not request detail"); } } });
+  assert.equal(result.planned.find((row) => row.idFotoPedido === "c").category,
+    "BASELINE_EXISTING_UNIMPORTED");
+}));
 
 test("pendente fora da janela é reavaliado e mantém resultado no estado auxiliar", async () => withStore(async (store) => {
   store.importBaseline(baseline());

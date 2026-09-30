@@ -11,6 +11,7 @@ function digitalOptions(env = process.env) {
   };
   return Object.freeze({
     enabled: env.DIGITAL_SYNC_ENABLED === "true",
+    writeEnabled: env.DIGITAL_SYNC_WRITE_ENABLED === "true",
     intervalMinutes: integer("DIGITAL_SYNC_INTERVAL_MINUTES", 30, 1, 1440),
     recentOrders: integer("DIGITAL_SYNC_RECENT_ORDERS", 50, 1, 500),
     maxScanPages: integer("DIGITAL_SYNC_MAX_SCAN_PAGES", 4, 1, 20),

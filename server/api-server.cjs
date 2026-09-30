@@ -5,6 +5,10 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const net = require("node:net");
 const database = require("../electron/database.cjs");
+const { digitalOptions } = require("./integrations/digital/sigi-config.cjs");
+const { DigitalSyncState } = require("./integrations/digital/digital-sync-state.cjs");
+const { DigitalSyncService, safeError } = require("./integrations/digital/digital-sync-service.cjs");
+const { prepareDigitalSyncScheduler } = require("./integrations/digital/digital-sync-scheduler.cjs");
 let active = false;
 const SESSION_HOURS = 12;
 const LOGIN_FAILURE_LIMIT = 10;
@@ -85,7 +89,8 @@ async function requireSession(request) {
   return user && user.ativo ? user : null;
 }
 
-function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0, allowedOrigin = "", lanPilot = false } = {}) {
+function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0,
+  allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions() } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
   if (lanPilot) {
     if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("dataDirectory absoluto é obrigatório no modo LAN.");
@@ -106,6 +111,15 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
     if (lanPilot) database.initializeDataDirectory(resolvedPath);
     else database.initialize({ getPath: () => resolvedPath });
   } catch (error) { active = false; database.close(); throw error; }
+
+  const syncState = lanPilot ? new DigitalSyncState(resolvedPath) : null;
+  let syncScheduler = null;
+  if (lanPilot && digitalSyncConfig.enabled === true) {
+    const service = new DigitalSyncService({ dbPath: path.join(resolvedPath, "gestao-logistica.sqlite3"),
+      dataDir: resolvedPath, options: digitalSyncConfig, stateStore: syncState });
+    syncScheduler = prepareDigitalSyncScheduler({ options: digitalSyncConfig,
+      run: () => service.runCycle() });
+  }
 
   const server = http.createServer(async (request, response) => {
     const requestOrigin = request.headers.origin || "";
@@ -155,6 +169,18 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       }
       const currentUser = await requireSession(request);
       if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
+      if (request.method === "GET" && url.pathname === "/api/digital-sync/status") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403,
+          errorBody("FORBIDDEN", "Somente a coordenação pode consultar a sincronização."), responseOrigin);
+        let state = null, stateError = null;
+        if (syncState) {
+          try { state = syncState.status(); }
+          catch (error) { stateError = safeError(error); }
+        }
+        return sendJson(response, 200, { ok: true, enabled: digitalSyncConfig.enabled === true,
+          writeEnabled: digitalSyncConfig.writeEnabled === true,
+          nextRunAt: syncScheduler?.nextDueAt() ?? null, state, stateError }, responseOrigin);
+      }
       if (request.method === "GET" && url.pathname === "/api/solicitations/assignees") {
         if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis."), responseOrigin);
         return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
@@ -291,7 +317,11 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
     server.listen(port, host, () => {
       server.removeListener("error", fail);
       const address = server.address();
-      resolve({ host, port: address.port, origin: `http://${host}:${address.port}`, close: async () => { await new Promise((done) => server.close(done)); database.close(); active = false; } });
+      syncScheduler?.start();
+      resolve({ host, port: address.port, origin: `http://${host}:${address.port}`, close: async () => {
+        await syncScheduler?.stopAndDrain();
+        await new Promise((done) => server.close(done)); database.close(); active = false;
+      } });
     });
   });
 }

@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { DatabaseSync } = require("node:sqlite");
+const { DatabaseSync, backup } = require("node:sqlite");
 
 const STATE_NAME = "digital-sync-state.sqlite3";
 const coded = (value) => new Error(value);
@@ -136,6 +136,8 @@ class DigitalSyncState {
         ON o.id_foto_pedido=w.id_foto_pedido ORDER BY w.position`).all();
       if (!rows.length) throw coded("DIGITAL_STATE_CORRUPT");
       const createdAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get()?.value;
+      const baselineIds = db.prepare("SELECT id_foto_pedido FROM observations WHERE first_seen_at=?")
+        .all(createdAt).map((row) => row.id_foto_pedido);
       const pendingIds = db.prepare("SELECT id_foto_pedido FROM observations WHERE process_state IN ('PENDING','READY','REVIEW')")
         .all().map((row) => row.id_foto_pedido);
       const toOrder = (row) => ({
@@ -143,7 +145,7 @@ class DigitalSyncState {
         dataPedidoMiliegundos: row.data_pedido_millis, status: row.status,
         descricaoStatus: row.descricao_status, itens: row.itens });
       return { schema: 1, createdAt, orders: rows.map(toOrder),
-        knownOrders: db.prepare("SELECT * FROM observations").all().map(toOrder), pendingIds };
+        knownOrders: db.prepare("SELECT * FROM observations").all().map(toOrder), baselineIds, pendingIds };
     } finally { db.close(); }
   }
 
@@ -182,12 +184,16 @@ class DigitalSyncState {
           const prior = db.prepare("SELECT process_state,classification,pending_reason FROM observations WHERE id_foto_pedido=?")
             .get(String(row.idFotoPedido));
           const category = plan?.category || prior?.classification || "OBSERVED";
+          const storedCategory = category === "EXISTING"
+            && ["IMPORTED", "REVIEW"].includes(prior?.process_state)
+            ? prior.classification : category;
           const state = category.startsWith("PENDING_") ? "PENDING" : category.startsWith("CANDIDATE") ? "READY"
-            : category.startsWith("REVIEW_") ? "REVIEW" : category === "EXISTING" ? "EXISTING"
+              : category.startsWith("REVIEW_") ? "REVIEW" : category === "EXISTING"
+                ? (["IMPORTED", "REVIEW"].includes(prior?.process_state) ? prior.process_state : "EXISTING")
               : category === "SKIP_CANCELLED" ? "CANCELLED" : prior?.process_state || "OBSERVED";
           upsert.run(String(row.idFotoPedido), String(row.numeroPedido), row.dataPedidoMiliegundos, row.itens ?? null,
             String(row.status), String(row.descricaoStatus), timestamp, timestamp, runId,
-            state, category, category.startsWith("PENDING_") ? category : null);
+            state, storedCategory, storedCategory.startsWith("PENDING_") ? storedCategory : null);
           window.run(index, String(row.idFotoPedido));
         }
         const windowIds = new Set(result.nextSnapshot.orders.map((row) => String(row.idFotoPedido)));
@@ -221,10 +227,19 @@ class DigitalSyncState {
     finally { db.close(); }
   }
 
+  markRunError(runId, code) {
+    const db = openVerified(this.file, false);
+    try { db.prepare(`UPDATE runs SET status='PARTIAL',error_code=?
+      WHERE run_id=? AND status='COMPLETE'`).run(
+      /^DIGITAL_[A-Z_]+$/.test(code) ? code : "DIGITAL_SYNC_FAILED", runId); }
+    finally { db.close(); }
+  }
+
   recordOutcome(idFotoPedido, outcome) {
     const classification = String(outcome);
     if (!["IMPORTED", "ALREADY_IMPORTED", "EXISTING_MANUAL", "REVIEW_IMPORTED_CHANGED",
-      "REVIEW_CONCURRENT_CHANGE", "PENDING_MISSING_SESSION"].includes(classification))
+      "REVIEW_CONCURRENT_CHANGE", "REVIEW_INVALID_PLAN", "REVIEW_OVER_TOTAL",
+      "PENDING_MISSING_SESSION", "PENDING_NO_SESSION"].includes(classification))
       throw coded("DIGITAL_STATE_OUTCOME_INVALID");
     const state = ["IMPORTED", "ALREADY_IMPORTED"].includes(classification) ? "IMPORTED"
       : classification.startsWith("PENDING_") ? "PENDING" : "REVIEW";
@@ -241,6 +256,30 @@ class DigitalSyncState {
     } finally { db.close(); }
   }
 
+  async classifyBaselineUnimported() {
+    const db = openVerified(this.file, false);
+    try {
+      const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
+      const pending = db.prepare(`SELECT COUNT(*) n FROM observations WHERE first_seen_at=?
+        AND classification='BASELINE_ABSENT_ACTIVE'`).get(baselineAt).n;
+      if (!pending) return { changed: 0, backupPath: null };
+      const backupDir = path.join(path.dirname(this.file), "backups");
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupPath = path.join(backupDir, `before-baseline-classification-${Date.now()}-${randomUUID()}.sqlite3`);
+      await backup(db, backupPath);
+      const verified = openVerified(backupPath);
+      verified.close();
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const changed = db.prepare(`UPDATE observations SET classification='BASELINE_EXISTING_UNIMPORTED'
+          WHERE first_seen_at=? AND classification='BASELINE_ABSENT_ACTIVE'`).run(baselineAt).changes;
+        if (changed !== pending) throw coded("DIGITAL_STATE_CORRUPT");
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      return { changed: pending, backupPath };
+    } finally { db.close(); }
+  }
+
   inspect() {
     const db = openVerified(this.file);
     try { return {
@@ -251,6 +290,38 @@ class DigitalSyncState {
       integrity: db.prepare("PRAGMA integrity_check").get().integrity_check,
       foreignKeyViolations: db.prepare("PRAGMA foreign_key_check").all().length
     }; } finally { db.close(); }
+  }
+
+  status() {
+    const db = openVerified(this.file);
+    try {
+      const last = db.prepare(`SELECT started_at,completed_at,status,checkpoint,error_code
+        FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 1`).get();
+      const lastSuccess = db.prepare(`SELECT completed_at FROM runs
+        WHERE status IN ('BASELINE_COMPLETE','COMPLETE')
+        ORDER BY started_at DESC,rowid DESC LIMIT 1`).get()?.completed_at;
+      const counts = db.prepare(`SELECT COUNT(*) observed,
+        SUM(CASE WHEN process_state='IMPORTED' THEN 1 ELSE 0 END) imported,
+        SUM(CASE WHEN process_state IN ('PENDING','READY','REVIEW') THEN 1 ELSE 0 END) pending,
+        SUM(CASE WHEN process_state IN ('BASELINE','CANCELLED','EXISTING') THEN 1 ELSE 0 END) ignored
+        FROM observations`).get();
+      return { lastRunAt: last?.started_at ?? null, lastRunStatus: last?.status ?? null,
+        lastSuccessfulAt: lastSuccess ?? null,
+        durationMs: last?.completed_at ? Date.parse(last.completed_at) - Date.parse(last.started_at) : null,
+        observed: counts.observed, imported: counts.imported, ignored: counts.ignored,
+        pending: counts.pending, lastError: last?.error_code ?? null };
+    } finally { db.close(); }
+  }
+
+  isBaselineOrder(idFotoPedido) {
+    const db = openVerified(this.file);
+    try {
+      const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
+      const row = db.prepare("SELECT first_seen_at FROM observations WHERE id_foto_pedido=?")
+        .get(String(idFotoPedido));
+      if (!row) throw coded("DIGITAL_STATE_ORDER_MISSING");
+      return row.first_seen_at === baselineAt;
+    } finally { db.close(); }
   }
 }
 

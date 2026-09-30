@@ -2,6 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { applyDigitalQuantitiesMigration } = require("./digital-quantities-migration.cjs");
+const { insertShipmentWithEvent, normalizeDigitalShipmentNumber,
+  validateShipmentQuantities } = require("./digital-shipment-write.cjs");
 const { DatabaseSync } = require("node:sqlite");
 
 let db;
@@ -680,7 +682,6 @@ function listOrders(options = {}) {
   return enriched.filter((row) => row.etapa === filter);
 }
 
-function normalizeDigitalShipmentNumber(value) { return clean(value).replace(/\s+/g, ""); }
 function normalizeDigitalSession(value) {
   const session = clean(value).replace(/\s+/g, "");
   if (!/^M?\d+$/i.test(session)) return null;
@@ -688,7 +689,10 @@ function normalizeDigitalSession(value) {
 }
 
 const digitalShipmentSummarySql = `SELECT s.id,s.numero_pedido_digital,s.data_envio,s.itens_digital,s.criado_por_usuario_id,
-    s.criado_em,s.atualizado_em,s.revision,coalesce(u.nome,'Usuário local') registrado_por,
+    s.criado_em,s.atualizado_em,s.revision,
+    CASE WHEN EXISTS (SELECT 1 FROM digital_envio_eventos ae WHERE ae.digital_envio_id=s.id
+      AND ae.acao='digital_sync_created' AND ae.usuario_id IS NULL)
+      THEN 'DigitalSyncService' ELSE coalesce(u.nome,'Usuário local') END registrado_por,
     count(i.id) sessoes_quantidade,
     s.itens_digital fotos_quantidade_soma,
     CASE WHEN s.itens_digital IS NULL THEN 1 ELSE 0 END fotos_quantidade_desconhecida
@@ -705,7 +709,8 @@ function getDigitalShipment(idValue) {
     LEFT JOIN clientes c ON c.id=p.cliente_id
     WHERE i.digital_envio_id=? ORDER BY p.sessao COLLATE NOCASE`).all(shipmentId);
   const events = db.prepare(`SELECT e.id,e.acao,e.descricao,e.criado_em,e.usuario_id,
-      coalesce(u.nome,'Usuário local') usuario_nome
+      CASE WHEN e.acao='digital_sync_created' AND e.usuario_id IS NULL
+        THEN 'DigitalSyncService' ELSE coalesce(u.nome,'Usuário local') END usuario_nome
     FROM digital_envio_eventos e LEFT JOIN usuarios u ON u.id=e.usuario_id
     WHERE e.digital_envio_id=? ORDER BY e.criado_em DESC,e.id DESC`).all(shipmentId);
   return { ...shipment, sessoes_quantidade: Number(shipment.sessoes_quantidade || 0),
@@ -785,7 +790,10 @@ function resolveDigitalShipmentSessions(input) {
   const normalized = [...new Set(normalizedValues)];
   const lookup = db.prepare(`SELECT p.id,p.sessao,p.fotos_quantidade,c.nome cliente_nome
     FROM pedidos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.sessao=? COLLATE NOCASE`);
-  const prior = db.prepare(`SELECT s.id,s.numero_pedido_digital,s.data_envio,coalesce(u.nome,'Usuário local') registrado_por
+  const prior = db.prepare(`SELECT s.id,s.numero_pedido_digital,s.data_envio,
+      CASE WHEN EXISTS (SELECT 1 FROM digital_envio_eventos ae WHERE ae.digital_envio_id=s.id
+        AND ae.acao='digital_sync_created' AND ae.usuario_id IS NULL)
+        THEN 'DigitalSyncService' ELSE coalesce(u.nome,'Usuário local') END registrado_por
     FROM digital_envio_itens i JOIN digital_envios s ON s.id=i.digital_envio_id
     LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id WHERE i.pedido_id=?
     ORDER BY s.data_envio DESC,s.criado_em DESC`);
@@ -838,14 +846,17 @@ function normalizeDigitalQuantity(value, error) {
 
 const DIGITAL_TOTAL_EXCEEDED = "A soma das quantidades das sessões não pode ser maior que o total de itens do pedido Digital.";
 function digitalQuantitiesExceedTotal(total, quantities) {
-  return total !== null && [...quantities.values()].every((value) => value !== null)
-    && [...quantities.values()].reduce((sum, value) => sum + value, 0) > total;
+  return validateShipmentQuantities(total ?? null,
+    [...quantities].map(([pedidoId, quantidadeEnviada]) => ({ pedidoId, quantidadeEnviada })))
+    === "DIGITAL_ITEMS_EXCEEDED";
 }
 
 function priorDigitalShipments(pedidoIds, exceptShipmentId = "") {
   if (!pedidoIds.length) return [];
   const rows = db.prepare(`SELECT p.id pedido_id,p.sessao,s.id envio_id,s.numero_pedido_digital,s.data_envio,
-      coalesce(u.nome,'Usuário local') registrado_por
+      CASE WHEN EXISTS (SELECT 1 FROM digital_envio_eventos ae WHERE ae.digital_envio_id=s.id
+        AND ae.acao='digital_sync_created' AND ae.usuario_id IS NULL)
+        THEN 'DigitalSyncService' ELSE coalesce(u.nome,'Usuário local') END registrado_por
     FROM digital_envio_itens i JOIN digital_envios s ON s.id=i.digital_envio_id
     JOIN pedidos p ON p.id=i.pedido_id LEFT JOIN usuarios u ON u.id=s.criado_por_usuario_id
     WHERE i.pedido_id IN (${pedidoIds.map(() => "?").join(",")}) AND s.id<>?
@@ -878,18 +889,18 @@ function createDigitalShipment(input) {
       return { ok: false, error: "DUPLICATE_SESSIONS", priorShipments: prior,
         message: `${new Set(prior.map((row) => row.pedido_id)).size} das sessões selecionadas já possui envio registrado.` };
     }
-    db.prepare(`INSERT INTO digital_envios
-      (id,numero_pedido_digital,data_envio,criado_por_usuario_id,criado_em,atualizado_em,revision,itens_digital)
-      VALUES (?,?,?,?,?,?,1,?)`).run(shipmentId, values.number, values.date, actor.user?.id || null, timestamp, timestamp, values.hasDigitalTotal ? values.digitalTotal : null);
-    const add = db.prepare("INSERT INTO digital_envio_itens (id,digital_envio_id,pedido_id,criado_em,quantidade_enviada) VALUES (?,?,?,?,?)");
-    for (const orderId of values.pedidoIds) add.run(id(), shipmentId, orderId, timestamp, values.quantities.get(orderId) ?? null);
     const who = actor.user?.nome || "Usuário local";
     const quantitiesDescription = values.pedidoIds.map((orderId) => {
       const session = values.orders.find((order) => order.id === orderId)?.sessao || orderId;
       const quantity = values.quantities.get(orderId);
       return `${session}=${quantity == null ? "não informada" : quantity}`;
     }).join(", ");
-    insertDigitalShipmentEvent(shipmentId, actor.user?.id, "created", `${who} registrou o pedido Digital ${values.number} com ${values.pedidoIds.length} sessões; total Digital ${values.hasDigitalTotal && values.digitalTotal !== null ? values.digitalTotal : "não informado"}; quantidades enviadas: ${quantitiesDescription}.`);
+    insertShipmentWithEvent(db, { id: shipmentId, number: values.number, date: values.date,
+      total: values.hasDigitalTotal ? values.digitalTotal : null,
+      actorUserId: actor.user?.id || null, timestamp,
+      items: values.pedidoIds.map((pedidoId) => ({ pedidoId,
+        quantidadeEnviada: values.quantities.get(pedidoId) ?? null })), action: "created",
+      description: `${who} registrou o pedido Digital ${values.number} com ${values.pedidoIds.length} sessões; total Digital ${values.hasDigitalTotal && values.digitalTotal !== null ? values.digitalTotal : "não informado"}; quantidades enviadas: ${quantitiesDescription}.` });
     db.exec("COMMIT");
     return { ok: true, shipment: getDigitalShipment(shipmentId) };
   } catch (error) {

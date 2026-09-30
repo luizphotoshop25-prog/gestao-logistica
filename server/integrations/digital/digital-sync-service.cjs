@@ -6,6 +6,7 @@ const { SigiClient } = require("./sigi-client.cjs");
 const { credentialPath, loadCredential } = require("./credential-store.cjs");
 const { buildDryRun, readDatabaseState } = require("./digital-sync-planner.cjs");
 const { DigitalSyncState } = require("./digital-sync-state.cjs");
+const { executeAuthorizedPlan, inspectCommittedShipment } = require("./digital-sync-executor.cjs");
 
 const running = new Set();
 const ALLOWED_ERRORS = new Set([
@@ -80,7 +81,7 @@ function writeDryRunReports(outputDir, result) {
   writeJson(path.join(outputDir, "dry-run.json"), report);
   writeJson(path.join(outputDir, "sync-diagnostics.json"), {
     mode: result.mode, possibleGap: result.scan.possibleGap,
-    pages: result.scan.pages, databaseWrites: 0, loginSucceeded: result.loginSucceeded,
+    pages: result.scan.pages, databaseWrites: result.databaseWrites ?? 0, loginSucceeded: result.loginSucceeded,
     sigiVersion: result.sigiVersion, durationMs: result.durationMs, apiErrors: 0,
     classifications: Object.fromEntries([...new Set(result.planned.map((p) => p.category))]
       .map((category) => [category, result.planned.filter((p) => p.category === category).length]))
@@ -95,7 +96,7 @@ function writeDryRunReports(outputDir, result) {
     `Pendências: ${result.summary.pending}`, `Sessões ausentes: ${result.summary.missingSessions}`,
     `Divergências de quantidade: ${result.summary.quantityDivergences}`,
     `Planejados: ${result.planned.length}`, `Erros API: 0`,
-    `Tempo: ${result.durationMs} ms`, `Alterações no banco: 0`
+    `Tempo: ${result.durationMs} ms`, `Alterações no banco: ${result.databaseWrites ?? 0}`
   ].join("\n") + "\n");
   if (!result.scan.possibleGap) writeJson(path.join(outputDir,
     result.mode === "baseline" ? "baseline-preview.json" : "latest-snapshot-preview.json"), nextSnapshot);
@@ -141,6 +142,7 @@ class DigitalSyncService {
         else this.stateStore.failRun(runId, "DIGITAL_CHECKPOINT_BLOCKED");
         runFinished = true;
       }
+      result.runId = runId ?? null;
       result.loginSucceeded = client.authenticated === true;
       result.sigiVersion = typeof client.version === "string" ? client.version : null;
       result.durationMs = Date.now() - started;
@@ -163,6 +165,49 @@ class DigitalSyncService {
       throw new Error(safeError(error));
     }
     finally { client?.close?.(); releaseLock?.(); running.delete(key); }
+  }
+
+  async runCycle({ writeReports = true } = {}) {
+    if (this.options.enabled !== true) return { status: "DISABLED", databaseWrites: 0 };
+    let releaseLock;
+    let completedScanRunId = null;
+    try {
+      releaseLock = acquireRunLock(this.outputDir);
+      if (this.options.writeEnabled === true) {
+        const snapshot = this.stateStore.loadSnapshot();
+        const known = new Map(snapshot.knownOrders.map((row) => [String(row.idFotoPedido), row]));
+        for (const id of snapshot.pendingIds) {
+          const meta = known.get(String(id));
+          if (!meta) throw new Error("DIGITAL_STATE_CORRUPT");
+          const outcome = inspectCommittedShipment(this.dbPath, meta.numeroPedido);
+          if (outcome) this.stateStore.recordOutcome(id, outcome);
+        }
+      }
+      const result = await this.runDryRun({ writeReports: false });
+      completedScanRunId = result.complete ? result.runId : null;
+      const outcomes = [];
+      if (this.options.writeEnabled === true && result.complete) {
+        for (const plan of result.planned) {
+          if (!["CANDIDATE", "CANDIDATE_UNDER_TOTAL"].includes(plan.category)) continue;
+          const outcome = executeAuthorizedPlan(this.dbPath, plan, {
+            syncEnabled: this.options.enabled, writeEnabled: this.options.writeEnabled,
+            stateStore: this.stateStore });
+          this.stateStore.recordOutcome(plan.idFotoPedido, outcome.outcome);
+          outcomes.push({ idFotoPedido: plan.idFotoPedido, outcome: outcome.outcome });
+        }
+      }
+      result.outcomes = outcomes;
+      result.databaseWrites = outcomes.filter((row) => row.outcome === "IMPORTED").length;
+      if (writeReports) writeDryRunReports(this.outputDir, result);
+      return result;
+    } catch (error) {
+      if (completedScanRunId) {
+        try { this.stateStore.markRunError(completedScanRunId, safeError(error)); }
+        catch { /* Preserve the original error; pending observations remain available. */ }
+      }
+      throw new Error(safeError(error));
+    }
+    finally { releaseLock?.(); }
   }
 }
 

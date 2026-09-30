@@ -1,8 +1,9 @@
 const { DatabaseSync } = require("node:sqlite");
 const history = require("../../../tools/digital-history/core.cjs");
+const { normalizeDigitalShipmentNumber } = require("../../../electron/digital-shipment-write.cjs");
 
-const identity = (order) => `${String(order.idFotoPedido)}|${String(order.numeroPedido).toLowerCase()}`;
-const orderNumber = (value) => String(value ?? "").trim().toLowerCase();
+const orderNumber = (value) => normalizeDigitalShipmentNumber(value).toLowerCase();
+const identity = (order) => `${String(order.idFotoPedido)}|${orderNumber(order.numeroPedido)}`;
 const cancelled = (order) => /cancelad/i.test(`${order.status ?? ""} ${order.descricaoStatus ?? ""}`);
 
 function readDatabaseState(dbPath) {
@@ -92,6 +93,7 @@ async function buildDryRun({ client, snapshot, options, dbState }) {
   const prior = new Map([...(snapshot?.knownOrders || []), ...(snapshot?.orders || [])]
     .map((o) => [identity(o), o]));
   const pending = new Set((snapshot?.pendingIds || []).map(String));
+  const baselineIds = new Set((snapshot?.baselineIds || []).map(String));
   const planned = [], changes = [];
   const listedIds = new Set(scan.orders.map((row) => String(row.idFotoPedido)));
   for (const meta of scan.orders) {
@@ -105,7 +107,12 @@ async function buildDryRun({ client, snapshot, options, dbState }) {
     }
     if (exists) { planned.push({ idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido, category: "EXISTING" }); continue; }
     if (cancelled(meta)) { planned.push({ idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido, category: "SKIP_CANCELLED" }); continue; }
-    if (old && !pending.has(String(meta.idFotoPedido))) continue;
+    if (old && !pending.has(String(meta.idFotoPedido))) {
+      if (baselineIds.has(String(meta.idFotoPedido))) planned.push({
+        idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido,
+        category: "BASELINE_EXISTING_UNIMPORTED" });
+      continue;
+    }
     const detail = await client.getOrderDetail(meta);
     planned.push(planDetail(meta, detail, dbState));
   }

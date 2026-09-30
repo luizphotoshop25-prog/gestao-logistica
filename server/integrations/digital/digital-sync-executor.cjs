@@ -1,8 +1,9 @@
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
-const { randomUUID } = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const { insertShipmentWithEvent, normalizeDigitalShipmentNumber,
+  validateShipmentQuantities } = require("../../../electron/digital-shipment-write.cjs");
 
 const SOURCE = "DigitalSyncService";
 const allowed = new Set(["CANDIDATE", "CANDIDATE_UNDER_TOTAL"]);
@@ -11,7 +12,7 @@ const localDate = (millis) => new Intl.DateTimeFormat("en-CA", {
 }).format(new Date(millis));
 
 function validatePlan(plan) {
-  if (!allowed.has(plan?.category) || !String(plan.numeroPedido || "").trim()
+  if (!allowed.has(plan?.category) || !normalizeDigitalShipmentNumber(plan.numeroPedido)
     || !Number.isSafeInteger(plan.dataPedidoMiliegundos)
     || !Number.isSafeInteger(plan.itensDigital) || plan.itensDigital < 0
     || !Array.isArray(plan.relations) || !plan.relations.length || plan.relations.length > 500
@@ -30,6 +31,9 @@ function validatePlan(plan) {
     if (!Number.isSafeInteger(sum)) return "REVIEW_INVALID_PLAN";
   }
   if (sum > plan.itensDigital) return "REVIEW_OVER_TOTAL";
+  if (validateShipmentQuantities(plan.itensDigital, plan.relations.map((relation) => ({
+    pedidoId: relation.pedidoId, quantidadeEnviada: relation.quantidadeEnviada
+  })))) return "REVIEW_INVALID_PLAN";
   if ((sum < plan.itensDigital ? "UNDER_TOTAL" : "MATCH") !== plan.quantityClassification)
     return "REVIEW_INVALID_PLAN";
   return null;
@@ -37,7 +41,7 @@ function validatePlan(plan) {
 
 function existingOutcome(db, plan) {
   const shipment = db.prepare("SELECT id,itens_digital,revision FROM digital_envios WHERE numero_pedido_digital=? COLLATE NOCASE")
-    .get(String(plan.numeroPedido));
+    .get(normalizeDigitalShipmentNumber(plan.numeroPedido));
   if (!shipment) return null;
   const autoEvent = db.prepare(`SELECT 1 FROM digital_envio_eventos
     WHERE digital_envio_id=? AND acao='digital_sync_created' AND usuario_id IS NULL`).get(shipment.id);
@@ -69,24 +73,16 @@ function applyPlan(db, plan, { failAt = null } = {}) {
         return { outcome: "PENDING_MISSING_SESSION" };
       if (row.revisao !== relation.expectedRevision) return { outcome: "REVIEW_CONCURRENT_CHANGE" };
     }
-    const shipmentId = randomUUID();
-    const timestamp = new Date().toISOString();
-    db.prepare(`INSERT INTO digital_envios(id,numero_pedido_digital,data_envio,criado_por_usuario_id,
-      criado_em,atualizado_em,revision,itens_digital) VALUES(?,?,?,NULL,?,?,1,?)`)
-      .run(shipmentId, String(plan.numeroPedido), localDate(plan.dataPedidoMiliegundos),
-        timestamp, timestamp, plan.itensDigital);
-    if (failAt === "shipment") throw new Error("SYNTHETIC_FAILURE");
-    const add = db.prepare(`INSERT INTO digital_envio_itens
-      (id,digital_envio_id,pedido_id,criado_em,quantidade_enviada) VALUES(?,?,?,?,?)`);
-    for (const relation of plan.relations) add.run(randomUUID(), shipmentId,
-      relation.pedidoId, timestamp, relation.quantidadeEnviada);
-    if (failAt === "items") throw new Error("SYNTHETIC_FAILURE");
     const quantities = plan.relations.map((row) => `${row.sessao}=${row.quantidadeEnviada}`).join(", ");
-    db.prepare(`INSERT INTO digital_envio_eventos
-      (id,digital_envio_id,usuario_id,acao,descricao,criado_em) VALUES(?,?,NULL,?,?,?)`)
-      .run(randomUUID(), shipmentId, "digital_sync_created",
-        `${SOURCE} importou pedido Digital ${plan.numeroPedido}; sessões ${quantities}; total ${plan.itensDigital}; resultado IMPORTED.`,
-        timestamp);
+    const shipmentId = insertShipmentWithEvent(db, {
+      number: plan.numeroPedido, date: localDate(plan.dataPedidoMiliegundos),
+      total: plan.itensDigital, actorUserId: null,
+      items: plan.relations.map((relation) => ({ pedidoId: relation.pedidoId,
+        quantidadeEnviada: relation.quantidadeEnviada })), action: "digital_sync_created",
+      description: `${SOURCE} importou pedido Digital ${plan.numeroPedido}; sessões ${quantities}; total ${plan.itensDigital}; resultado IMPORTED.`,
+      afterShipment: failAt === "shipment" ? () => { throw new Error("SYNTHETIC_FAILURE"); } : null,
+      afterItems: failAt === "items" ? () => { throw new Error("SYNTHETIC_FAILURE"); } : null
+    });
     if (failAt === "audit") throw new Error("SYNTHETIC_FAILURE");
     db.exec("COMMIT"); committed = true;
     return { outcome: "IMPORTED", shipmentId };
@@ -103,4 +99,36 @@ function executeOnTemporaryCopy(dbPath, plan, options) {
   finally { db.close(); }
 }
 
-module.exports = { executeOnTemporaryCopy, validatePlan, SOURCE };
+function executeAuthorizedPlan(dbPath, plan, { syncEnabled = false, writeEnabled = false,
+  stateStore = null } = {}) {
+  if (syncEnabled !== true || writeEnabled !== true)
+    return { outcome: "DIGITAL_WRITE_DISABLED" };
+  if (!stateStore || !plan?.idFotoPedido || stateStore.isBaselineOrder(plan.idFotoPedido))
+    return { outcome: "BASELINE_EXISTING_UNIMPORTED" };
+  const target = fs.realpathSync(path.resolve(dbPath));
+  const db = new DatabaseSync(target);
+  try { return applyPlan(db, plan); }
+  finally { db.close(); }
+}
+
+function inspectCommittedShipment(dbPath, number) {
+  const db = new DatabaseSync(path.resolve(dbPath), { readOnly: true });
+  try {
+    db.exec("PRAGMA query_only=ON");
+    const shipment = db.prepare(`SELECT id,revision,itens_digital FROM digital_envios
+      WHERE numero_pedido_digital=? COLLATE NOCASE`).get(normalizeDigitalShipmentNumber(number));
+    if (!shipment) return null;
+    const event = db.prepare(`SELECT 1 FROM digital_envio_eventos
+      WHERE digital_envio_id=? AND acao='digital_sync_created' AND usuario_id IS NULL`).get(shipment.id);
+    if (!event) return "EXISTING_MANUAL";
+    const items = db.prepare(`SELECT quantidade_enviada FROM digital_envio_itens
+      WHERE digital_envio_id=?`).all(shipment.id);
+    if (shipment.revision !== 1 || !items.length || validateShipmentQuantities(shipment.itens_digital,
+      items.map((item, index) => ({ pedidoId: String(index), quantidadeEnviada: item.quantidade_enviada }))))
+      return "REVIEW_IMPORTED_CHANGED";
+    return "ALREADY_IMPORTED";
+  } finally { db.close(); }
+}
+
+module.exports = { executeOnTemporaryCopy, executeAuthorizedPlan,
+  inspectCommittedShipment, validatePlan, SOURCE };
