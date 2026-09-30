@@ -12,6 +12,7 @@ const { checkRemoteApiHealth, resolveRemoteConfig } = require("./remote-config.c
 const { loadClientBuild } = require("./client-build.cjs");
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
+const { readUiPreferences, writeUiPreferences } = require("./ui-preferences.cjs");
 const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 
 const buildMarker = loadClientBuild({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
@@ -98,6 +99,17 @@ function registerUpdaterIpc() {
   ipcMain.handle("updater:install", (event) => {
     if (!trusted(event)) return { ok: false };
     return updaterController?.install() || { ok: false };
+  });
+}
+
+function registerUiPreferencesIpc() {
+  ipcMain.handle("ui-preferences:get", (event) => {
+    if (!trusted(event)) return { ok: false, fontScale: 1 };
+    return { ok: true, ...readUiPreferences(app.getPath("userData")) };
+  });
+  ipcMain.handle("ui-preferences:set", (event, input) => {
+    if (!trusted(event)) return { ok: false, fontScale: 1 };
+    return writeUiPreferences(app.getPath("userData"), input);
   });
 }
 
@@ -290,6 +302,7 @@ app.whenReady().then(async () => {
   registerSessionIpc();
   registerIpc();
   registerUpdaterIpc();
+  registerUiPreferencesIpc();
   updaterController = globalThis[UPDATER_KEY] || createUpdaterController({
     app,
     autoUpdater,
@@ -301,8 +314,9 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
   });
   createWindow();
-  setTimeout(() => { void updaterController.checkSilently(); }, 10000);
-  if (httpMode) return;
+  const interactiveSmoke = app.isPackaged && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
+  if (!interactiveSmoke) setTimeout(() => { void updaterController.checkSilently(); }, 10000);
+  if (httpMode || interactiveSmoke) return;
   setTimeout(async () => {
     await runSiwinSync();
     runThunderbirdSync();

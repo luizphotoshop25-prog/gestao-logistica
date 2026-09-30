@@ -34,6 +34,7 @@ import { TableSkeleton } from "./components/TableSkeleton";
 import { SolicitationsPage } from "./components/SolicitationsPage";
 import { DigitalOrderHistory, DigitalShipmentsPage } from "./components/DigitalShipmentsPage";
 import { sortOrdersBySession } from "./utils/session-sort";
+import { AppearanceSettings } from "./components/AppearanceSettings";
 
 const stageLabels: Record<string, string> = {
   sessao_criada: "Sessão criada",
@@ -96,7 +97,7 @@ const formatCurrency = (value: number) => new Intl.NumberFormat("pt-BR", {
   style: "currency", currency: "BRL",
 }).format(Number(value) || 0);
 
-export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout?: () => void }) {
+export function App({ currentUser, onLogout, fontScale, onFontScalePreview, onFontScaleApply }: { currentUser: AuthUser; onLogout?: () => void; fontScale: number; onFontScalePreview: (scale: number) => void; onFontScaleApply: (scale: number) => Promise<boolean> }) {
   const [centralQueue, setCentralQueue] = useState("needs_me");
   const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
   const [orderPreviewId, setOrderPreviewId] = useState<string | null>(null);
@@ -620,6 +621,7 @@ export function App({ currentUser, onLogout }: { currentUser: AuthUser; onLogout
         <span className="section-kicker">OPERAÇÃO</span>
         {([['central', 'Central', Activity], ['orders', 'Pedidos', PackageOpen], ['myOrders', 'Meus Pedidos', UserCheck], ['digital', 'Enviados Digital', Send], ['solicitations', 'Solicitações', ClipboardList]] as const).map(([key, label, Icon]) => <button key={key} className={workspacePage === key ? 'shell-active' : undefined} aria-current={workspacePage === key ? 'page' : undefined} onClick={() => { setCentralTask(null); if (key === "myOrders") { setSearch(""); setFilter("all"); setSearchScope("all"); } navigateWorkspace(key); }}><Icon size={18} />{label}</button>)}
         {window.gestaoConfig.dataTransport !== 'http' && <div className="shell-secondary"><span className="section-kicker">CONSULTAS</span><button className={workspacePage === "clients" ? "shell-active" : undefined} aria-current={workspacePage === "clients" ? "page" : undefined} onClick={() => navigateWorkspace("clients")}><Users size={18} />Clientes</button></div>}
+        <div className="shell-preferences"><AppearanceSettings fontScale={fontScale} onPreview={onFontScalePreview} onApply={onFontScaleApply} /></div>
         <div className="shell-version">Gestão Logística · v{__APP_VERSION__}</div>
       </nav>
       <header className="shell-header">

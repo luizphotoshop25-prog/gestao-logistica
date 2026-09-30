@@ -10,6 +10,7 @@ let updaterController;
 let recoveryWindow;
 let startupFailureReported = false;
 const smokeDirectory = resolveSmokeDirectory(process.env.GESTAO_PACKAGED_RUNTIME_SMOKE_DIR);
+const interactiveSmoke = Boolean(smokeDirectory) && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
 
 function resolveSmokeDirectory(candidate) {
   if (!candidate) return "";
@@ -122,13 +123,13 @@ app.whenReady().then(() => {
   });
   globalThis[UPDATER_KEY] = updaterController;
   writeSmokeMarker("updater-initialized", { enabled: updaterController.enabled });
-  void updaterController.checkSilently();
+  if (!interactiveSmoke) void updaterController.checkSilently();
 
   app.on("browser-window-created", (_event, window) => {
     window.webContents.once("did-finish-load", () => {
       if (window === recoveryWindow) return;
       writeSmokeMarker("application-window-ready");
-      if (smokeDirectory) setTimeout(() => app.quit(), 100);
+      if (smokeDirectory && !interactiveSmoke) setTimeout(() => app.quit(), 100);
     });
   });
   app.on("window-all-closed", (event) => {

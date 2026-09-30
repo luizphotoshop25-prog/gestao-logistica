@@ -94,13 +94,15 @@ app.setPath("userData", profilePath);
 
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
-const allowedChannels = new Set(["app:status", "updater:get-state", "auth:local-current", "orders:list", "orders:get", "orders:treatment-assignees", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create", "digital-shipments:list", "digital-shipments:get", "digital-shipments:for-order", "digital-shipments:resolve-sessions", "digital-shipments:create", "digital-shipments:update"]);
+const allowedChannels = new Set(["app:status", "updater:get-state", "auth:local-current", "ui-preferences:get", "ui-preferences:set", "orders:list", "orders:get", "orders:treatment-assignees", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create", "digital-shipments:list", "digital-shipments:get", "digital-shipments:for-order", "digital-shipments:resolve-sessions", "digital-shipments:create", "digital-shipments:update"]);
 if (httpTransport) {
   allowedChannels.clear();
   allowedChannels.add("updater:get-state");
   allowedChannels.add("auth-session:read");
   allowedChannels.add("auth-session:write");
   allowedChannels.add("auth-session:clear");
+  allowedChannels.add("ui-preferences:get");
+  allowedChannels.add("ui-preferences:set");
 }
 const registerHandler = ipcMain.handle.bind(ipcMain);
 let digitalListCalls = 0;
@@ -141,6 +143,19 @@ app.whenReady().then(() => {
       try {
         if (httpTransport) {
           await waitForSelector(window, ".auth-card");
+          for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+            window.setContentSize(width, height);
+            for (const percent of [90, 100, 110, 120, 130]) {
+              const scale = percent / 100;
+              await window.webContents.executeJavaScript(`window.gestaoUiPreferences.set({fontScale:${scale}}).then(()=>document.documentElement.style.setProperty('--font-scale',${JSON.stringify(String(scale))}))`);
+              const audit = await window.webContents.executeJavaScript(`(() => {const w=document.documentElement.clientWidth;const h=[...document.querySelectorAll('.auth-card h1,.auth-card p,.auth-card label,.auth-card input,.auth-card button')].filter(e=>getComputedStyle(e).display!=='none');const clipped=h.filter(e=>e.scrollWidth>e.clientWidth+2||e.scrollHeight>e.clientHeight+2).map(e=>({tag:e.tagName,text:(e.innerText||e.getAttribute('aria-label')||'').slice(0,70),size:[e.clientWidth,e.clientHeight],scroll:[e.scrollWidth,e.scrollHeight]}));return {pageOverflow:document.documentElement.scrollWidth>w+1,clipped,card:document.querySelector('.auth-card').getBoundingClientRect().toJSON(),viewport:[w,document.documentElement.clientHeight]}})()`);
+              if (audit.pageOverflow || audit.clipped.length || audit.card.left < 0 || audit.card.right > audit.viewport[0] || audit.card.top < 0 || audit.card.bottom > audit.viewport[1]) throw new Error(`TEXT_SCALE_LOGIN_OVERFLOW ${percent}% ${width}x${height}: ${JSON.stringify(audit)}`);
+              const loginScalePath = outputPath.replace(/\.png$/i, `-textscale-login-${percent}-${width}x${height}.png`);
+              await capture(window, loginScalePath);
+            }
+          }
+          await window.webContents.executeJavaScript("window.gestaoUiPreferences.set({fontScale:1}).then(()=>document.documentElement.style.setProperty('--font-scale','1'))");
+          window.setContentSize(1366, 768);
           await capture(window, outputPath.replace(/\.png$/i, "-login.png"));
           await window.webContents.executeJavaScript(`(() => { const inputs=document.querySelectorAll('.auth-card input'); const set=(input,value)=>{ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,value); input.dispatchEvent(new Event('input',{bubbles:true})); }; set(inputs[0],${JSON.stringify(captureUser)}); set(inputs[1],${JSON.stringify(capturePassword)}); document.querySelector('.auth-card').requestSubmit(); })()`);
         }
@@ -326,6 +341,144 @@ app.whenReady().then(() => {
           await setValue("#digital-search", "M60999"); await waitText(".digital-session-result", "Sessão não encontrada");
           await waitForSelector(window, ".digital-screen .ui-state-empty");
           await saveDigital("estado-vazio");
+        }
+
+        const savedAtStart = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+        if (!savedAtStart.ok || savedAtStart.fontScale !== 1) throw new Error("O perfil visual de teste não iniciou no tamanho padrão.");
+        const appearanceTrigger = ".appearance-trigger";
+        const appearanceOption = (percent) => `.appearance-options button:nth-child(${[90, 100, 110, 120, 130].indexOf(percent) + 1})`;
+        const openAppearance = async () => {
+          await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceTrigger)}).click()`);
+          await waitForSelector(window, ".appearance-dialog");
+        };
+        const waitAppearanceClosed = async () => {
+          const deadline = Date.now() + 4000;
+          while (Date.now() < deadline && await window.webContents.executeJavaScript("Boolean(document.querySelector('.appearance-dialog'))")) await delay(50);
+        };
+        const verifyAppearancePreview = async (percent) => {
+          const expected = percent / 100;
+          const scale = Number(await window.webContents.executeJavaScript("getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()"));
+          const persisted = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+          if (scale !== expected || ![0.9, 1, 1.1, 1.2, 1.3].includes(persisted.fontScale)) throw new Error(`Preview tipográfico não corresponde a ${percent}%.`);
+        };
+        await openAppearance();
+        await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceOption(130))}).click()`);
+        const cancelPreview = await window.webContents.executeJavaScript("({scale:getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim(),dialog:Boolean(document.querySelector('.appearance-dialog'))})");
+        if (Number(cancelPreview.scale) !== 1.3 || !cancelPreview.dialog) throw new Error("O preview de 130% não foi aplicado imediatamente.");
+        const beforeCancel = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+        if (beforeCancel.fontScale !== 1) throw new Error("O preview foi persistido antes de Aplicar.");
+        await window.webContents.executeJavaScript("document.querySelector('.appearance-actions .ui-button').click()");
+        await delay(120);
+        if (Number(await window.webContents.executeJavaScript("getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()")) !== 1) throw new Error("Cancelar não restaurou o tamanho anterior.");
+        await openAppearance();
+        await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceOption(120))}).click()`);
+        await delay(80);
+        await window.webContents.executeJavaScript("document.querySelector('.appearance-apply').click()");
+        await waitAppearanceClosed();
+        const saved120 = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+        if (saved120.fontScale !== 1.2) {
+          const error = await window.webContents.executeJavaScript("document.querySelector('.appearance-error')?.innerText || ''");
+          throw new Error(`Aplicar não persistiu 120% no perfil local: ${JSON.stringify({ saved120, error })}`);
+        }
+        await openAppearance();
+        await window.webContents.executeJavaScript("document.querySelector('.appearance-reset').click()");
+        const resetScale = Number(await window.webContents.executeJavaScript("getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()"));
+        const resetSaved = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+        if (resetScale !== 1 || resetSaved.fontScale !== 1.2) throw new Error("Restaurar padrão deve atualizar apenas o preview até Aplicar.");
+        await window.webContents.executeJavaScript("document.querySelector('.appearance-apply').click()");
+        await waitAppearanceClosed();
+        const saved100 = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+        if (saved100.fontScale !== 1) throw new Error("Restaurar padrão não persistiu 100% ao aplicar.");
+        await window.webContents.executeJavaScript("document.querySelector('.app-navigation>button:nth-of-type(5)').click()");
+        await waitForSelector(window, ".solicitations-page");
+        await window.webContents.executeJavaScript("document.querySelector('.solicitations-new')?.click()");
+        await waitForSelector(window, "#solicitation-create-title");
+        const solicitationDraft = "Rascunho preservado durante ajuste visual";
+        await window.webContents.executeJavaScript(`(() => { const field=document.querySelector('.solicitation-modal textarea'); const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(field,${JSON.stringify(solicitationDraft)}); field.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+        await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceTrigger)}).click()`);
+        await waitForSelector(window, ".appearance-dialog");
+        await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceOption(130))}).click()`);
+        await window.webContents.executeJavaScript("document.querySelector('.appearance-actions .ui-button').click()");
+        await delay(100);
+        const draftPreserved = await window.webContents.executeJavaScript(`({value:document.querySelector('.solicitation-modal textarea')?.value,open:Boolean(document.querySelector('.solicitation-modal')),scale:getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()})`);
+        if (draftPreserved.value !== solicitationDraft || !draftPreserved.open || Number(draftPreserved.scale) !== 1) throw new Error("Preview/cancel alterou o rascunho ou não restaurou a escala na solicitação aberta.");
+        await window.webContents.executeJavaScript("document.querySelector('.solicitation-modal .icon-button')?.click()");
+        await delay(100);
+
+        const layoutAudit = async (label) => {
+          const result = await window.webContents.executeJavaScript(`(() => {
+            const visible = (el) => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return s.display!=='none' && s.visibility!=='hidden' && r.width>0 && r.height>0; };
+            const viewportWidth=document.documentElement.clientWidth;
+            const horizontalPageOverflow=document.documentElement.scrollWidth>viewportWidth+1 || document.body.scrollWidth>viewportWidth+1;
+            const critical=[...document.querySelectorAll('button,input,select,textarea,h1,h2,h3,.section-kicker,.shell-brand,.stage,.solicitation-status,.solicitation-card-title')].filter(visible);
+            const clipped=critical.filter((el)=>{const s=getComputedStyle(el); if(s.overflowX==='auto'||s.overflowY==='auto'||s.overflowX==='scroll'||s.overflowY==='scroll')return false; return el.scrollWidth>el.clientWidth+2||el.scrollHeight>el.clientHeight+2;}).map(el=>({tag:el.tagName,cls:typeof el.className==='string'?el.className:'',text:(el.innerText||el.getAttribute('aria-label')||'').trim().slice(0,80),client:[el.clientWidth,el.clientHeight],scroll:[el.scrollWidth,el.scrollHeight]}));
+            const outside=[...document.querySelectorAll('button,input,select,textarea')].filter(visible).filter(el=>{let parent=el.parentElement;while(parent&&parent!==document.body){const s=getComputedStyle(parent);if(s.overflowX==='auto'||s.overflowX==='scroll')return false;parent=parent.parentElement;}const r=el.getBoundingClientRect();return r.left<-1||r.right>viewportWidth+1;}).map(el=>({text:(el.innerText||el.getAttribute('aria-label')||'').trim().slice(0,80),rect:[el.getBoundingClientRect().left,el.getBoundingClientRect().right]}));
+            const dialogsOutside=[...document.querySelectorAll('[role=dialog]')].filter(visible).filter(el=>{const r=el.getBoundingClientRect();return r.left<-1||r.right>viewportWidth+1||r.top<-1||r.bottom>document.documentElement.clientHeight+1;}).map(el=>({text:(el.innerText||'').trim().slice(0,60),rect:[el.getBoundingClientRect().left,el.getBoundingClientRect().top,el.getBoundingClientRect().right,el.getBoundingClientRect().bottom]}));
+            return {viewportWidth,horizontalPageOverflow,clipped,outside,dialogsOutside};
+          })()`);
+          if (result.horizontalPageOverflow || result.clipped.length || result.outside.length || result.dialogsOutside.length) throw new Error(`TEXT_SCALE_LAYOUT_OVERFLOW ${label}: ${JSON.stringify(result)}`);
+          return result;
+        };
+
+        const scaleScreens = [["central", 0], ["pedidos", 1], ["meus-pedidos", 2], ["enviados-digital", 3], ["solicitacoes", 4], ["clientes", -1]];
+        for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+          window.setContentSize(width, height);
+          for (const percent of [90, 100, 110, 120, 130]) {
+            await openAppearance();
+            await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(appearanceOption(percent))}).click()`);
+            await verifyAppearancePreview(percent);
+            const settingsPath = outputPath.replace(/\.png$/i, `-textscale-aparencia-${percent}-${width}x${height}.png`);
+            await capture(window, settingsPath); generatedPaths.push(settingsPath);
+            await window.webContents.executeJavaScript("document.querySelector('.appearance-apply').click()");
+            await waitAppearanceClosed();
+            const saved = await window.webContents.executeJavaScript("window.gestaoUiPreferences.get()");
+            if (saved.fontScale !== percent / 100) throw new Error(`Preferência de ${percent}% não sobreviveu ao Aplicar.`);
+
+            for (const [name, index] of scaleScreens) {
+              const selector = index < 0 ? ".shell-secondary button" : `.app-navigation>button:nth-of-type(${index + 1})`;
+              await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)}).click()`);
+              await delay(120);
+              if (!await window.webContents.executeJavaScript(`Boolean(document.querySelector(${JSON.stringify(selector)}))`)) throw new Error(`Tela ${name} não abriu.`);
+              await layoutAudit(`${name} ${percent}% ${width}x${height}`);
+              const screenPath = outputPath.replace(/\.png$/i, `-textscale-${name}-${percent}-${width}x${height}.png`);
+              await capture(window, screenPath); generatedPaths.push(screenPath);
+              if (name === "central") {
+                await window.webContents.executeJavaScript("document.querySelector('.integration-trigger')?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+                await waitForSelector(window, ".integrations-popover");
+                await layoutAudit(`menu de integrações ${percent}% ${width}x${height}`);
+                const menuPath = outputPath.replace(/\.png$/i, `-textscale-menu-${percent}-${width}x${height}.png`);
+                await capture(window, menuPath); generatedPaths.push(menuPath);
+                await window.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+              }
+              if (name === "pedidos") {
+                await window.webContents.executeJavaScript("document.querySelector('.session-link')?.click()");
+                await waitForSelector(window, ".order-preview");
+                await layoutAudit(`prévia de pedido ${percent}% ${width}x${height}`);
+                await window.webContents.executeJavaScript("document.querySelector('.order-preview .ui-button-primary')?.click()");
+                await waitForSelector(window, ".detail-modal");
+                await layoutAudit(`ficha de pedido ${percent}% ${width}x${height}`);
+                const orderModalPath = outputPath.replace(/\.png$/i, `-textscale-ficha-${percent}-${width}x${height}.png`);
+                await capture(window, orderModalPath); generatedPaths.push(orderModalPath);
+                await window.webContents.executeJavaScript("document.querySelector('.detail-head button[aria-label=\"Fechar ficha\"]')?.click()");
+              }
+              if (name === "enviados-digital") {
+                await window.webContents.executeJavaScript("document.querySelector('.digital-heading .ui-button-primary')?.click()");
+                await waitForSelector(window, ".digital-form-modal");
+                await layoutAudit(`formulário Digital ${percent}% ${width}x${height}`);
+                const digitalModalPath = outputPath.replace(/\.png$/i, `-textscale-digital-form-${percent}-${width}x${height}.png`);
+                await capture(window, digitalModalPath); generatedPaths.push(digitalModalPath);
+                await window.webContents.executeJavaScript("document.querySelector('.digital-form-modal [aria-label=\"Fechar formulário\"]')?.click()");
+              }
+              if (name === "solicitacoes") {
+                await window.webContents.executeJavaScript("document.querySelector('.solicitations-new')?.click()");
+                await waitForSelector(window, "#solicitation-create-title");
+                await layoutAudit(`nova solicitação ${percent}% ${width}x${height}`);
+                const solicitationModalPath = outputPath.replace(/\.png$/i, `-textscale-solicitacao-form-${percent}-${width}x${height}.png`);
+                await capture(window, solicitationModalPath); generatedPaths.push(solicitationModalPath);
+                await window.webContents.executeJavaScript("document.querySelector('.solicitation-modal .icon-button')?.click()");
+              }
+            }
+          }
         }
 
         process.stdout.write(`userData=${resolvedProfilePath}\n${generatedPaths.join("\n")}\n`);

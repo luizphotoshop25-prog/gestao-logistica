@@ -205,6 +205,10 @@ type AppUpdateState =
 
 interface Window {
   gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
+  gestaoUiPreferences: {
+    get(): Promise<{ ok: boolean; fontScale: number }>;
+    set(preferences: { fontScale: number }): Promise<{ ok: boolean; fontScale: number }>;
+  };
   gestaoSession: {
     read(): Promise<string>;
     write(token: string): Promise<{ ok: boolean }>;

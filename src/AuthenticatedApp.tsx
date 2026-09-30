@@ -11,6 +11,27 @@ export function AuthenticatedApp() {
   const [senha, setSenha] = useState("");
   const [message, setMessage] = useState("");
   const [retrying, setRetrying] = useState(false);
+  const [savedFontScale, setSavedFontScale] = useState(1);
+  const [previewFontScale, setPreviewFontScale] = useState(1);
+  useEffect(() => {
+    let active = true;
+    void window.gestaoUiPreferences.get().then((result) => {
+      if (!active || !result.ok) return;
+      setSavedFontScale(result.fontScale);
+      setPreviewFontScale(result.fontScale);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--font-scale", String(previewFontScale));
+  }, [previewFontScale]);
+  const applyFontScale = async (fontScale: number) => {
+    const result = await window.gestaoUiPreferences.set({ fontScale });
+    if (!result.ok) return false;
+    setSavedFontScale(result.fontScale);
+    setPreviewFontScale(result.fontScale);
+    return true;
+  };
   const restore = async () => { setLoading(true); setMessage(""); try { const token = await window.gestaoSession.read(); if (token) { dataService.restoreSession(token); const result = await dataService.currentUser(); if (result.ok && result.user) setUser(result.user); else await window.gestaoSession.clear(); } } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível conectar ao servidor do Gestão Logística."); } finally { setLoading(false); } };
   useEffect(() => {
     if (httpMode) void restore();
@@ -34,5 +55,5 @@ export function AuthenticatedApp() {
   const logout = async () => { try { await dataService.logout(); } catch { /* Sessão local deve ser limpa mesmo sem rede. */ } finally { await window.gestaoSession.clear(); setUser(null); } };
   if (loading) return <><div className="auth-screen"><p>Validando sessão…</p></div><UpdateNotice /></>;
   if (!user) return <><div className="auth-screen"><form className="auth-card" onSubmit={login}><span>GESTÃO LOGÍSTICA · ESTÚDIO MANOEL GUIMARÃES</span><div><h1>Entrar</h1><p className="auth-intro">Acesse sua central de pedidos e solicitações.</p></div><label>Usuário<input autoFocus autoComplete="username" value={usuario} onChange={(event) => setUsuario(event.target.value)} /></label><label>Senha<input type="password" autoComplete="current-password" value={senha} onChange={(event) => setSenha(event.target.value)} /></label>{message && <p className="auth-error" role="alert">{message}</p>}<button className="primary" type="submit">Entrar</button>{httpMode && message.toLocaleLowerCase("pt-BR").includes("conectar") && <button className="ui-button" type="button" onClick={() => void retryRemote()} disabled={retrying}>{retrying ? "Verificando servidor…" : "Tentar novamente"}</button>}</form></div><UpdateNotice /></>;
-  return <><App currentUser={user} onLogout={httpMode ? () => void logout() : undefined} /><UpdateNotice /></>;
+  return <><App currentUser={user} onLogout={httpMode ? () => void logout() : undefined} fontScale={savedFontScale} onFontScalePreview={setPreviewFontScale} onFontScaleApply={applyFontScale} /><UpdateNotice /></>;
 }

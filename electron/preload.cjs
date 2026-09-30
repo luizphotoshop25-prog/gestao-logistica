@@ -67,3 +67,8 @@ contextBridge.exposeInMainWorld("gestaoSession", {
   clear: () => ipcRenderer.invoke("auth-session:clear"),
   retryRemoteConfig: () => ipcRenderer.invoke("remote-config:retry"),
 });
+
+contextBridge.exposeInMainWorld("gestaoUiPreferences", {
+  get: () => ipcRenderer.invoke("ui-preferences:get"),
+  set: (preferences) => ipcRenderer.invoke("ui-preferences:set", preferences),
+});
