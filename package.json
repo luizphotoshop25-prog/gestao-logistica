@@ -44,7 +44,10 @@
     "server:lan": "node server/lan-server.cjs",
     "pilot:prepare": "node scripts/prepare-lan-pilot.cjs",
     "pilot:backfill-client-documents": "node scripts/backfill-client-documents.cjs",
-    "pilot:migrate-treatment-assignment": "node scripts/migrate-treatment-assignment.cjs"
+    "pilot:migrate-treatment-assignment": "node scripts/migrate-treatment-assignment.cjs",
+    "digital-sync:test": "node --test tests/digital-sync.test.cjs",
+    "check:digital-sync": "node --check server/integrations/digital/sigi-config.cjs && node --check server/integrations/digital/sigi-client.cjs && node --check server/integrations/digital/credential-store.cjs && node --check server/integrations/digital/digital-sync-planner.cjs && node --check server/integrations/digital/digital-sync-service.cjs && node --check scripts/digital-sync.cjs && node --check scripts/provision-digital-credential.cjs && node --check tests/digital-sync.test.cjs",
+    "digital-sync:dry-run": "node scripts/digital-sync.cjs --once --dry-run"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
