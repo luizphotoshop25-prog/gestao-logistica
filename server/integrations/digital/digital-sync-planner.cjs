@@ -12,12 +12,13 @@ function readDatabaseState(dbPath) {
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name));
     if (!["pedidos", "digital_envios", "digital_envio_itens"].every((name) => tables.has(name)))
       throw new Error("DIGITAL_DB_SCHEMA_ERROR");
-    const sessions = new Map(db.prepare("SELECT id,sessao FROM pedidos").all()
-      .map((row) => [String(row.sessao).toUpperCase(), row.id]));
+    const orders = db.prepare("SELECT id,sessao,revisao FROM pedidos").all();
+    const sessions = new Map(orders.map((row) => [String(row.sessao).toUpperCase(), row.id]));
+    const revisions = new Map(orders.map((row) => [row.id, row.revisao]));
     const existing = new Map(db.prepare("SELECT id,numero_pedido_digital,itens_digital FROM digital_envios").all()
       .map((row) => [orderNumber(row.numero_pedido_digital), { id: row.id, total: row.itens_digital }]));
     const counts = db.prepare("SELECT (SELECT count(*) FROM digital_envios) envios, (SELECT count(*) FROM digital_envio_itens) relacoes").get();
-    return { sessions, existing, counts };
+    return { sessions, revisions, existing, counts };
   } finally { db.close(); }
 }
 
@@ -31,8 +32,8 @@ function makeSnapshot(listing, pendingIds = []) {
 
 function planDetail(meta, detail, dbState) {
   const number = String(meta.numeroPedido);
-  if (dbState.existing.has(orderNumber(number))) return { numeroPedido: number, category: "EXISTING" };
-  if (cancelled(meta) || detail.classification === "CANCELADO") return { numeroPedido: number, category: "SKIP_CANCELLED" };
+  if (dbState.existing.has(orderNumber(number))) return { idFotoPedido: String(meta.idFotoPedido), numeroPedido: number, category: "EXISTING" };
+  if (cancelled(meta) || detail.classification === "CANCELADO") return { idFotoPedido: String(meta.idFotoPedido), numeroPedido: number, category: "SKIP_CANCELLED" };
   const total = Number.isSafeInteger(detail.itensInformados) && detail.itensInformados >= 0 ? detail.itensInformados : null;
   const photos = Number.isSafeInteger(detail.fotosRetornadas) ? detail.fotosRetornadas : null;
   const recognized = detail.sessoes.reduce((sum, s) => sum + Number(s.arquivos || 0), 0);
@@ -42,9 +43,11 @@ function planDetail(meta, detail, dbState) {
     const pedidoId = dbState.sessions.get(name);
     (pedidoId ? found : missing).push({ sessao: name,
       quantidadeEnviada: Number.isSafeInteger(session.arquivos) && session.arquivos >= 0 ? session.arquivos : null,
-      ...(pedidoId ? { pedidoId } : {}) });
+      ...(pedidoId ? { pedidoId, expectedRevision: dbState.revisions?.get(pedidoId) ?? null } : {}) });
   }
   const base = { numeroPedido: number, idFotoPedido: String(meta.idFotoPedido),
+    dataPedidoMiliegundos: Number.isSafeInteger(detail.dataPedidoMiliegundos)
+      ? detail.dataPedidoMiliegundos : meta.dataPedidoMiliegundos,
     itensDigital: total, fotosRetornadas: photos, arquivosInvalidos: detail.arquivosInvalidos,
     relations: found, missingSessions: missing,
     quantityClassification: total === null ? "UNKNOWN" : recognized > total ? "OVER_TOTAL"
@@ -86,28 +89,47 @@ async function scanRecent(client, snapshot, options) {
 
 async function buildDryRun({ client, snapshot, options, dbState }) {
   const scan = await scanRecent(client, snapshot, options);
-  const prior = new Map((snapshot?.orders || []).map((o) => [identity(o), o]));
+  const prior = new Map([...(snapshot?.knownOrders || []), ...(snapshot?.orders || [])]
+    .map((o) => [identity(o), o]));
   const pending = new Set((snapshot?.pendingIds || []).map(String));
   const planned = [], changes = [];
+  const listedIds = new Set(scan.orders.map((row) => String(row.idFotoPedido)));
   for (const meta of scan.orders) {
     const key = identity(meta), old = prior.get(key);
     const exists = dbState.existing.has(orderNumber(meta.numeroPedido));
     if (old && (old.status !== meta.status || old.descricaoStatus !== meta.descricaoStatus || old.itens !== meta.itens))
       changes.push({ numeroPedido: meta.numeroPedido, occurrence: "DIGITAL_ORDER_CHANGED" });
     if (!snapshot) {
-      planned.push({ numeroPedido: meta.numeroPedido, category: exists ? "BASELINE_EXISTING" : "BASELINE_OBSERVED" });
+      planned.push({ idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido, category: exists ? "BASELINE_EXISTING" : "BASELINE_OBSERVED" });
       continue;
     }
-    if (exists) { planned.push({ numeroPedido: meta.numeroPedido, category: "EXISTING" }); continue; }
-    if (cancelled(meta)) { planned.push({ numeroPedido: meta.numeroPedido, category: "SKIP_CANCELLED" }); continue; }
+    if (exists) { planned.push({ idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido, category: "EXISTING" }); continue; }
+    if (cancelled(meta)) { planned.push({ idFotoPedido: String(meta.idFotoPedido), numeroPedido: meta.numeroPedido, category: "SKIP_CANCELLED" }); continue; }
     if (old && !pending.has(String(meta.idFotoPedido))) continue;
     const detail = await client.getOrderDetail(meta);
     planned.push(planDetail(meta, detail, dbState));
   }
-  const observedIds = new Set(scan.orders.map((o) => String(o.idFotoPedido)));
+  const knownById = new Map([...(snapshot?.knownOrders || []), ...(snapshot?.orders || [])]
+    .map((row) => [String(row.idFotoPedido), row]));
+  const recheckLimit = options.pendingRecheckLimit ?? 10;
+  let rechecked = 0;
+  for (const id of pending) {
+    if (listedIds.has(id) || rechecked >= recheckLimit) continue;
+    const meta = knownById.get(id);
+    if (!meta) continue;
+    rechecked++;
+    if (dbState.existing.has(orderNumber(meta.numeroPedido))) {
+      planned.push({ idFotoPedido: id, numeroPedido: meta.numeroPedido, category: "EXISTING" });
+      continue;
+    }
+    const detail = await client.getOrderDetail(meta);
+    planned.push(planDetail(meta, detail, dbState));
+  }
+  const processedIds = new Set(planned.map((row) => String(row.idFotoPedido)));
   const pendingIds = [
-    ...[...pending].filter((id) => !observedIds.has(id)),
-    ...planned.filter((p) => p.category.startsWith("PENDING_")).map((p) => p.idFotoPedido)
+    ...[...pending].filter((id) => !processedIds.has(id)),
+    ...planned.filter((p) => p.category.startsWith("PENDING_") || p.category.startsWith("CANDIDATE"))
+      .map((p) => p.idFotoPedido).filter(Boolean)
   ];
   const nextSnapshot = makeSnapshot(scan.orders, pendingIds);
   return { mode: snapshot ? "incremental" : "baseline", scan: {
@@ -115,7 +137,8 @@ async function buildDryRun({ client, snapshot, options, dbState }) {
     overlap: scan.overlap, possibleGap: scan.gap, reachedPageLimit: scan.reachedPageLimit,
     observedInBaseline: snapshot ? scan.orders.filter((order) => prior.has(identity(order))).length : scan.orders.length,
     newObserved: snapshot ? scan.orders.filter((order) => !prior.has(identity(order))).length : 0 },
-    planned, changes, nextSnapshot, databaseCounts: dbState.counts, databaseWrites: 0,
+    planned, changes, pendingRechecked: rechecked, nextSnapshot,
+    databaseCounts: dbState.counts, databaseWrites: 0,
     complete: !scan.gap };
 }
 

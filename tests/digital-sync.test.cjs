@@ -208,8 +208,8 @@ test("SQLite sintético é aberto somente para leitura, sem mutação", () => {
   const file = path.join(dir, "test.sqlite3");
   try {
     const db = new DatabaseSync(file);
-    db.exec("CREATE TABLE pedidos(id TEXT,sessao TEXT); CREATE TABLE digital_envios(id TEXT,numero_pedido_digital TEXT,itens_digital INTEGER); CREATE TABLE digital_envio_itens(id TEXT)");
-    db.exec("INSERT INTO pedidos VALUES('p1','M50255'); INSERT INTO digital_envios VALUES('d1','118596',1); INSERT INTO digital_envio_itens VALUES('i1')");
+    db.exec("CREATE TABLE pedidos(id TEXT,sessao TEXT,revisao INTEGER); CREATE TABLE digital_envios(id TEXT,numero_pedido_digital TEXT,itens_digital INTEGER); CREATE TABLE digital_envio_itens(id TEXT)");
+    db.exec("INSERT INTO pedidos VALUES('p1','M50255',1); INSERT INTO digital_envios VALUES('d1','118596',1); INSERT INTO digital_envio_itens VALUES('i1')");
     db.close();
     const before = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
     assert.deepEqual({ ...readDatabaseState(file).counts }, { envios: 1, relacoes: 1 });

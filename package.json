@@ -45,8 +45,11 @@
     "pilot:prepare": "node scripts/prepare-lan-pilot.cjs",
     "pilot:backfill-client-documents": "node scripts/backfill-client-documents.cjs",
     "pilot:migrate-treatment-assignment": "node scripts/migrate-treatment-assignment.cjs",
-    "digital-sync:test": "node --test tests/digital-sync.test.cjs",
-    "check:digital-sync": "node --check server/integrations/digital/sigi-config.cjs && node --check server/integrations/digital/sigi-client.cjs && node --check server/integrations/digital/credential-store.cjs && node --check server/integrations/digital/digital-sync-planner.cjs && node --check server/integrations/digital/digital-sync-service.cjs && node --check scripts/digital-sync.cjs && node --check scripts/provision-digital-credential.cjs && node --check scripts/provision-digital-credential-local.cjs && node --check tests/digital-sync.test.cjs",
+    "digital-sync:test": "node --test tests/digital-sync.test.cjs tests/digital-sync-state.test.cjs",
+    "check:digital-sync": "node --check server/integrations/digital/sigi-config.cjs && node --check server/integrations/digital/sigi-client.cjs && node --check server/integrations/digital/credential-store.cjs && node --check server/integrations/digital/digital-sync-planner.cjs && node --check server/integrations/digital/digital-sync-service.cjs && node --check server/integrations/digital/digital-sync-reconcile.cjs && node --check server/integrations/digital/digital-sync-state.cjs && node --check server/integrations/digital/digital-sync-executor.cjs && node --check server/integrations/digital/digital-sync-scheduler.cjs && node --check scripts/digital-sync.cjs && node --check scripts/provision-digital-credential.cjs && node --check scripts/provision-digital-credential-local.cjs && node --check scripts/reconcile-digital-baseline.cjs && node --check scripts/import-digital-baseline.cjs && node --check tests/digital-sync.test.cjs && node --check tests/digital-sync-state.test.cjs && node --check tests/smoke-digital-sync-executor.cjs",
+    "digital-sync:reconcile": "node scripts/reconcile-digital-baseline.cjs",
+    "digital-sync:import-baseline": "node scripts/import-digital-baseline.cjs",
+    "digital-sync:executor-smoke": "node tests/smoke-digital-sync-executor.cjs",
     "digital-sync:dry-run": "node scripts/digital-sync.cjs --once --dry-run"
   },
   "devDependencies": {

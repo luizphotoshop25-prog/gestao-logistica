@@ -5,6 +5,7 @@ const { digitalOptions } = require("./sigi-config.cjs");
 const { SigiClient } = require("./sigi-client.cjs");
 const { credentialPath, loadCredential } = require("./credential-store.cjs");
 const { buildDryRun, readDatabaseState } = require("./digital-sync-planner.cjs");
+const { DigitalSyncState } = require("./digital-sync-state.cjs");
 
 const running = new Set();
 const ALLOWED_ERRORS = new Set([
@@ -13,7 +14,8 @@ const ALLOWED_ERRORS = new Set([
   "DIGITAL_LOGIN_PROTOCOL_ERROR", "DIGITAL_SESSION_ERROR", "DIGITAL_API_UNAVAILABLE",
   "DIGITAL_RATE_LIMIT", "DIGITAL_UNEXPECTED_RESPONSE", "DIGITAL_LIST_SCHEMA_ERROR",
   "DIGITAL_LIST_DUPLICATE_OR_INVALID", "DIGITAL_LIST_INCONSISTENT", "DIGITAL_DB_SCHEMA_ERROR",
-  "DIGITAL_SYNC_BUSY", "DIGITAL_SNAPSHOT_INVALID"
+  "DIGITAL_SYNC_BUSY", "DIGITAL_SNAPSHOT_INVALID", "DIGITAL_STATE_MISSING",
+  "DIGITAL_STATE_CORRUPT", "DIGITAL_CHECKPOINT_BLOCKED"
 ]);
 const safeError = (error) => ALLOWED_ERRORS.has(error?.code || error?.message)
   ? error.code || error.message : "DIGITAL_SYNC_FAILED";
@@ -101,13 +103,15 @@ function writeDryRunReports(outputDir, result) {
 
 class DigitalSyncService {
   constructor({ dbPath, dataDir, outputDir = path.resolve("work/digital-sync"),
-    options = digitalOptions(), clientFactory, dbReader = readDatabaseState } = {}) {
+    options = digitalOptions(), clientFactory, dbReader = readDatabaseState,
+    stateStore = null } = {}) {
     if (!path.isAbsolute(dbPath || "") || !path.isAbsolute(dataDir || "")) throw new Error("DIGITAL_CONFIG_ERROR");
     this.dbPath = dbPath;
     this.dataDir = dataDir;
     this.outputDir = outputDir;
     this.options = options;
     this.dbReader = dbReader;
+    this.stateStore = stateStore || new DigitalSyncState(dataDir);
     this.injectedClient = typeof clientFactory === "function";
     this.clientFactory = clientFactory || (() => new SigiClient({
       credentialProvider: () => loadCredential(dataDir), delayMs: options.requestDelayMs
@@ -121,16 +125,22 @@ class DigitalSyncService {
     running.add(key);
     let client;
     let releaseLock;
+    let runId;
+    let runFinished = false;
     try {
       if (writeReports) releaseLock = acquireRunLock(this.outputDir);
+      const previous = snapshot === undefined ? this.stateStore.loadSnapshot() : snapshot;
       if (!this.injectedClient && !fs.existsSync(credentialPath(this.dataDir)))
         throw new Error("DIGITAL_CREDENTIAL_MISSING");
       client = this.clientFactory();
       const dbState = this.dbReader(this.dbPath);
-      const previous = snapshot === undefined
-        ? loadSnapshot(path.join(this.outputDir, "latest-snapshot-preview.json"))
-          || loadSnapshot(path.join(this.outputDir, "baseline-preview.json")) : snapshot;
+      if (snapshot === undefined) runId = this.stateStore.startRun();
       const result = await buildDryRun({ client, snapshot: previous, options: this.options, dbState });
+      if (runId) {
+        if (result.complete) this.stateStore.finishRun(runId, result);
+        else this.stateStore.failRun(runId, "DIGITAL_CHECKPOINT_BLOCKED");
+        runFinished = true;
+      }
       result.loginSucceeded = client.authenticated === true;
       result.sigiVersion = typeof client.version === "string" ? client.version : null;
       result.durationMs = Date.now() - started;
@@ -146,7 +156,12 @@ class DigitalSyncService {
       };
       if (writeReports) writeDryRunReports(this.outputDir, result);
       return result;
-    } catch (error) { throw new Error(safeError(error)); }
+    } catch (error) {
+      if (runId && !runFinished) {
+        try { this.stateStore.failRun(runId, safeError(error)); } catch { /* Preserve original failure. */ }
+      }
+      throw new Error(safeError(error));
+    }
     finally { client?.close?.(); releaseLock?.(); running.delete(key); }
   }
 }
