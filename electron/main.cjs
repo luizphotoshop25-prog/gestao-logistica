@@ -117,7 +117,17 @@ function registerUiPreferencesIpc() {
 function registerNotificationIpc() {
   ipcMain.handle("notifications:native", (event, input) => {
     if (!trusted(event)) return { ok: false };
-    return showNativeSolicitationNotification(Notification, mainWindow, input);
+    const showFallback = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send("notifications:fallback", {
+        solicitationId: input?.solicitationId,
+        type: input?.type,
+      });
+    };
+    return showNativeSolicitationNotification(Notification, mainWindow, input, showFallback);
   });
 }
 
@@ -308,7 +318,6 @@ async function prepareRemoteClient() {
 }
 
 app.whenReady().then(async () => {
-  if (process.platform === "win32") app.setAppUserModelId("br.com.manoelguimaraes.gestaologistica");
   if (remoteClientBuild && !(await prepareRemoteClient())) return;
   if (!httpMode) database.initialize(app);
   registerSessionIpc();

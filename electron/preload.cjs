@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
     ipcRenderer.on("notifications:open", listener);
     return () => ipcRenderer.removeListener("notifications:open", listener);
   },
+  onNativeSolicitationFallback: (callback) => {
+    const listener = (_event, input) => callback(input);
+    ipcRenderer.on("notifications:fallback", listener);
+    return () => ipcRenderer.removeListener("notifications:fallback", listener);
+  },
   listDigitalShipments: (options) => ipcRenderer.invoke("digital-shipments:list", options),
   getDigitalShipment: (id) => ipcRenderer.invoke("digital-shipments:get", id),
   getDigitalShipmentsForOrder: (orderId) => ipcRenderer.invoke("digital-shipments:for-order", orderId),

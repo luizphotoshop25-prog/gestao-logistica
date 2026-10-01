@@ -253,8 +253,9 @@ interface Window {
     pollSolicitationNotifications(): Promise<SolicitationNotificationResult>;
     listSolicitationNotifications(): Promise<SolicitationNotificationResult>;
     updateSolicitationNotification(input: { id: string; action: "seen" | "open" | "resolve" | "snooze"; minutes?: number }): Promise<{ ok: boolean; message?: string }>;
-    showNativeSolicitationNotification(input: { solicitationId: string; type: SolicitationNotificationType }): Promise<{ ok: boolean }>;
+    showNativeSolicitationNotification(input: { solicitationId: string; type: SolicitationNotificationType }): Promise<{ ok: boolean; reason?: string }>;
     onNativeSolicitationOpen(callback: (solicitationId: string) => void): () => void;
+    onNativeSolicitationFallback(callback: (input: { solicitationId: string; type: SolicitationNotificationType }) => void): () => void;
     listDigitalShipments(options?: DigitalShipmentOptions): Promise<DigitalShipmentListResult>;
     getDigitalShipment(id: string): Promise<{ ok: boolean; error?: string; message?: string; shipment?: DigitalShipment }>;
     getDigitalShipmentsForOrder(orderId: string): Promise<{ ok: boolean; error?: string; message?: string; rows?: DigitalShipmentSummary[] }>;

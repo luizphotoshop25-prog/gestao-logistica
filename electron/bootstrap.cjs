@@ -2,6 +2,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = require("electron");
+if (process.platform === "win32") {
+  app.setAppUserModelId("br.com.manoelguimaraes.gestaologistica");
+  app.setToastActivatorCLSID("{9C070A34-2C33-41B1-83F3-41262D1E71B2}");
+}
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 

@@ -6,12 +6,18 @@ const TITLES = {
   ASSIGNED: "Nova solicitação atribuída",
 };
 
-function showNativeSolicitationNotification(Notification, mainWindow, input) {
-  if (!mainWindow || mainWindow.isDestroyed() || (mainWindow.isVisible() && mainWindow.isFocused())) return { ok: false };
-  if (!Notification.isSupported() || typeof input?.solicitationId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.solicitationId)) return { ok: false };
+function showNativeSolicitationNotification(Notification, mainWindow, input, onFallback = () => {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, reason: "window-unavailable" };
+  if (mainWindow.isVisible() && mainWindow.isFocused()) return { ok: false, reason: "foreground" };
+  if (typeof input?.solicitationId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.solicitationId)) return { ok: false, reason: "invalid-input" };
   const title = TITLES[input.type];
-  if (!title) return { ok: false };
+  if (!title) return { ok: false, reason: "invalid-type" };
+  if (!Notification.isSupported()) {
+    onFallback();
+    return { ok: false, reason: "unsupported" };
+  }
   const notification = new Notification({ title, body: "Abra o Gestão Logística para visualizar.", silent: true });
+  notification.once("failed", () => onFallback());
   notification.on("click", () => {
     if (mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -20,7 +26,7 @@ function showNativeSolicitationNotification(Notification, mainWindow, input) {
     mainWindow.webContents.send("notifications:open", input.solicitationId);
   });
   notification.show();
-  return { ok: true };
+  return { ok: true, reason: "shown" };
 }
 
 module.exports = { showNativeSolicitationNotification };

@@ -15,6 +15,8 @@ export function SolicitationNotifications({ onOpen }: { onOpen: (id: string) => 
   const [toast, setToast] = useState<SolicitationNotification | null>(null);
   const [expanded, setExpanded] = useState(false);
   const polling = useRef(false);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const poll = useCallback(async () => {
     if (polling.current) return;
@@ -25,8 +27,8 @@ export function SolicitationNotifications({ onOpen }: { onOpen: (id: string) => 
       setRows(result.rows);
       const fresh = result.rows.find((row) => result.delivered?.includes(row.id));
       if (!fresh) return;
-      if (document.hasFocus() && !document.hidden) setToast(fresh);
-      else void window.gestaoAPI.showNativeSolicitationNotification({ solicitationId: fresh.solicitacao_id, type: fresh.tipo }).catch(() => {});
+      const nativeResult = await window.gestaoAPI.showNativeSolicitationNotification({ solicitationId: fresh.solicitacao_id, type: fresh.tipo });
+      if (!nativeResult.ok) setToast(fresh);
     } catch { /* Notifications must never block the application. */ }
     finally { polling.current = false; }
   }, []);
@@ -37,7 +39,11 @@ export function SolicitationNotifications({ onOpen }: { onOpen: (id: string) => 
     const onFocus = () => void poll();
     window.addEventListener("focus", onFocus);
     const unsubscribe = window.gestaoAPI.onNativeSolicitationOpen((id) => onOpen(id));
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); unsubscribe(); };
+    const unsubscribeFallback = window.gestaoAPI.onNativeSolicitationFallback((input) => {
+      const fallback = rowsRef.current.find((row) => row.solicitacao_id === input.solicitationId && row.tipo === input.type);
+      if (fallback) setToast(fallback);
+    });
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); unsubscribe(); unsubscribeFallback(); };
   }, [poll, onOpen]);
 
   useEffect(() => {

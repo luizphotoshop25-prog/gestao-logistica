@@ -24,6 +24,15 @@ assert.equal(showNativeSolicitationNotification(FakeNotification, window, { soli
 assert.deepEqual(notification.options, { title: "Solicitação atrasada", body: "Abra o Gestão Logística para visualizar.", silent: true });
 notification.emit("click");
 assert.deepEqual(events, ["show-notification", "restore", "show-window", "focus", ["notifications:open", id]]);
-assert.equal(showNativeSolicitationNotification(FakeNotification, { ...window, isFocused: () => true }, { solicitationId: id, type: "OVERDUE" }).ok, false);
-assert.equal(showNativeSolicitationNotification(FakeNotification, window, { solicitationId: "other", type: "OVERDUE" }).ok, false);
+assert.deepEqual(showNativeSolicitationNotification(FakeNotification, { ...window, isFocused: () => true }, { solicitationId: id, type: "OVERDUE" }), { ok: false, reason: "foreground" });
+assert.deepEqual(showNativeSolicitationNotification(FakeNotification, window, { solicitationId: "other", type: "OVERDUE" }), { ok: false, reason: "invalid-input" });
+class UnsupportedNotification extends FakeNotification {
+  static isSupported() { return false; }
+}
+const fallbackEvents = [];
+assert.deepEqual(showNativeSolicitationNotification(UnsupportedNotification, window, { solicitationId: id, type: "OVERDUE" }, () => fallbackEvents.push("unsupported")), { ok: false, reason: "unsupported" });
+assert.deepEqual(fallbackEvents, ["unsupported"]);
+showNativeSolicitationNotification(FakeNotification, window, { solicitationId: id, type: "OVERDUE" }, () => fallbackEvents.push("failed"));
+notification.emit("failed", {}, "toast failure");
+assert.deepEqual(fallbackEvents, ["unsupported", "failed"]);
 console.log("Windows: privacidade, supressão em foco e clique para restaurar/focar solicitação aprovados com evento simulado.");
