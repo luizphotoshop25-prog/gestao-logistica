@@ -1,13 +1,14 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, Notification, shell } = require("electron");
 if (process.platform === "win32") {
   app.setAppUserModelId("br.com.manoelguimaraes.gestaologistica");
   app.setToastActivatorCLSID("{9C070A34-2C33-41B1-83F3-41262D1E71B2}");
 }
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
+const { ensureWindowsNotificationRegistration } = require("./windows-notification-registration.cjs");
 
 const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 let updaterController;
@@ -51,6 +52,34 @@ function recordFailure(error) {
     fs.appendFileSync(path.join(logDirectory, "startup-recovery.log"),
       `${new Date().toISOString()} ${details.code}${details.missing ? ` missing=${details.missing}` : ""}\n`, "utf8");
   } catch { /* Recovery reporting must not block the updater. */ }
+  return details;
+}
+
+function registerWindowsNotifications() {
+  if (process.platform !== "win32" || !app.isPackaged) return { ok: true, status: "not-installed-runtime" };
+  let supportedBefore = false;
+  try { supportedBefore = Notification.isSupported(); } catch { /* Diagnostics do not block startup. */ }
+  let registration;
+  try {
+    registration = ensureWindowsNotificationRegistration({
+      platform: process.platform,
+      appDataPath: app.getPath("appData"),
+      executablePath: process.execPath,
+      shell,
+    });
+  } catch {
+    registration = { ok: false, status: "registration-error" };
+  }
+  let supportedAfter = false;
+  try { supportedAfter = Notification.isSupported(); } catch { /* Diagnostics do not block startup. */ }
+  const details = { ...registration, supportedBefore, supportedAfter };
+  try {
+    const logDirectory = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(logDirectory, { recursive: true });
+    fs.appendFileSync(path.join(logDirectory, "notification-registration.log"),
+      `${new Date().toISOString()} ${JSON.stringify(details)}\n`, "utf8");
+  } catch { /* Notification registration diagnostics must not block startup. */ }
+  writeSmokeMarker("windows-notification-registration", details);
   return details;
 }
 
@@ -109,6 +138,8 @@ process.on("unhandledRejection", (error) => showRecovery(error));
 globalThis[Symbol.for("gestao-logistica.show-recovery")] = showRecovery;
 
 app.whenReady().then(() => {
+  registerWindowsNotifications();
+
   if (smokeDirectory) {
     fs.mkdirSync(smokeDirectory, { recursive: true });
     app.setPath("userData", path.join(smokeDirectory, "profile"));

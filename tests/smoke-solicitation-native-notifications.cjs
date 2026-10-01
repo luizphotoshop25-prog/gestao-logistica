@@ -35,4 +35,5 @@ assert.deepEqual(fallbackEvents, ["unsupported"]);
 showNativeSolicitationNotification(FakeNotification, window, { solicitationId: id, type: "OVERDUE" }, () => fallbackEvents.push("failed"));
 notification.emit("failed", {}, "toast failure");
 assert.deepEqual(fallbackEvents, ["unsupported", "failed"]);
-console.log("Windows: privacidade, supressão em foco e clique para restaurar/focar solicitação aprovados com evento simulado.");
+assert.deepEqual(events, ["show-notification", "restore", "show-window", "focus", ["notifications:open", id], "show-notification"]);
+console.log("Windows: privacidade, supressão em foco, clique real simulado e fallback não intrusivo aprovados.");

@@ -119,9 +119,6 @@ function registerNotificationIpc() {
     if (!trusted(event)) return { ok: false };
     const showFallback = () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
       mainWindow.webContents.send("notifications:fallback", {
         solicitationId: input?.solicitationId,
         type: input?.type,

@@ -80,11 +80,13 @@ function waitForMarker(directory, names, child, milliseconds = timeoutMs) {
 }
 
 function launchPackaged(executable, smokeDirectory) {
+  const appDataDirectory = path.join(smokeDirectory, "appdata");
+  fs.mkdirSync(appDataDirectory, { recursive: true });
   const child = spawn(executable, [], {
     cwd: path.dirname(executable),
     windowsHide: true,
     stdio: "ignore",
-    env: { ...process.env, GESTAO_PACKAGED_RUNTIME_SMOKE_DIR: smokeDirectory },
+    env: { ...process.env, APPDATA: appDataDirectory, GESTAO_PACKAGED_RUNTIME_SMOKE_DIR: smokeDirectory },
   });
   child.on("error", () => {});
   return child;
