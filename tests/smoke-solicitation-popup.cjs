@@ -13,10 +13,12 @@ class FakeWindow extends EventEmitter {
     this.bounds = null;
     this.webContents = {
       id: nextId++,
+      zoomFactor: 1,
       isLoading: () => false,
       setWindowOpenHandler: () => {},
       on: () => {},
       send: (channel, state) => { this.lastMessage = { channel, state }; },
+      setZoomFactor(value) { this.zoomFactor = value; },
     };
     windows.push(this);
   }
@@ -32,16 +34,19 @@ class FakeWindow extends EventEmitter {
 
 const mainWindow = { title: "Gestão Logística", isDestroyed: () => false, getBounds: () => ({ x: 0, y: 0, width: 900, height: 700 }) };
 windows = [mainWindow];
+let workArea = { x: 0, y: 0, width: 1366, height: 728 };
 const screen = {
-  getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1366, height: 728 } }),
-  getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1366, height: 728 } }),
+  getDisplayMatching: () => ({ workArea }),
+  getPrimaryDisplay: () => ({ workArea }),
 };
 const presented = [];
 const actions = [];
+let fontScale = 1;
 const controller = createSolicitationPopupController({
   BrowserWindow: FakeWindow,
   screen,
   directory: "C:\\app\\electron",
+  fontScale,
   onPresented: (ids) => presented.push(ids),
   onAction: (action) => actions.push(action),
 });
@@ -77,6 +82,7 @@ try {
   assert.ok(popup.bounds.y + popup.bounds.height <= 728 - MARGIN);
   assert.equal(popup.bounds.width, WINDOW_WIDTH);
   assert.equal(popup.bounds.height <= 660, true);
+  assert.equal(popup.webContents.zoomFactor, 1);
   assert.equal(presented[0].length, 4, "Itens agregados também ficam marcados como apresentados.");
   assert.equal(MAX_CARDS, 3);
   assert.equal(controller.acceptAction({ sender: { id: popup.webContents.id } }, { action: "snooze", id: rows[0].id, minutes: 30 }), false);
@@ -84,8 +90,25 @@ try {
   assert.equal(controller.acceptAction({ sender: { id: popup.webContents.id } }, { action: "snooze", id: rows[0].id, minutes: 5 }), true);
   assert.deepEqual(actions.at(-1), { action: "snooze", id: rows[0].id, solicitationId: rows[0].solicitacao_id, minutes: 5 });
   assert.equal(popup.destroyed, true);
+  fontScale = 1.3;
+  controller.setFontScale(fontScale);
+  const highScale = controller.present(rows, new Date("2026-10-02T20:55:00.000Z"));
+  assert.deepEqual(highScale, { ok: true, count: 4, visible: 2, overflow: 2 }, "A 130% o popup reduz cartões em tela baixa e agrupa o excedente.");
+  assert.equal(controller.getWindow().webContents.zoomFactor, 1.3);
+  assert.ok(controller.getWindow().bounds.width > WINDOW_WIDTH);
+  assert.ok(controller.getWindow().bounds.y + controller.getWindow().bounds.height <= workArea.height - MARGIN);
+  workArea = { x: 1600, y: 0, width: 1920, height: 1040 };
+  fontScale = 1.2;
+  controller.setFontScale(fontScale);
+  assert.equal(controller.getWindow().webContents.zoomFactor, 1.2);
+  assert.equal(controller.getWindow().bounds.x + controller.getWindow().bounds.width, 1600 + 1920 - MARGIN, "A posição respeita a workArea do monitor da janela.");
+  assert.ok(controller.getWindow().bounds.y + controller.getWindow().bounds.height <= 1040 - MARGIN);
+  fontScale = 0.9;
+  controller.setFontScale(fontScale);
+  assert.equal(controller.getWindow().webContents.zoomFactor, 0.9);
+  assert.equal(controller.getWindow().bounds.width, Math.round(WINDOW_WIDTH * 0.9));
   controller.close();
-  console.log("Popup: conteúdo sanitizado, prioridade visual, posição, foco não roubado, limite de cards e ações aprovados.");
+  console.log("Popup: conteúdo sanitizado, foco, limite/agrupamento, ações, workArea 1366/1920 e escalas 90/100/120/130% aprovados.");
 } finally {
   controller.close();
 }

@@ -3,6 +3,7 @@ const path = require("node:path");
 const WINDOW_WIDTH = 416;
 const MAX_CARDS = 3;
 const MARGIN = 20;
+const FONT_SCALES = Object.freeze([0.9, 1, 1.1, 1.2, 1.3]);
 const SNOOZE_OPTIONS = Object.freeze({ DUE_TODAY: [30, 60], DUE_IN_ONE_HOUR: [15, 30], DUE_IN_15_MINUTES: [5, 10, 15], DUE_NOW: [15, 30, 60], OVERDUE: [15, 30, 60] });
 const TITLES = Object.freeze({
   ASSIGNED: "Nova solicitação atribuída",
@@ -58,35 +59,59 @@ function lifetimeFor(notices) {
   return 8000;
 }
 
-function createSolicitationPopupController({ BrowserWindow, screen, directory, onAction = () => {}, onPresented = () => {} }) {
+function createSolicitationPopupController({ BrowserWindow, screen, directory, onAction = () => {}, onPresented = () => {}, fontScale = 1 }) {
   let popup;
   let closeTimer;
   let pendingState = null;
   let allowedSenderId = null;
+  let currentNotices = [];
+  let currentFontScale = normalizeFontScale(fontScale);
 
-  function boundsFor(height) {
+  function normalizeFontScale(value) {
+    return typeof value === "number" && FONT_SCALES.includes(value) ? value : 1;
+  }
+
+  function heightFor(visibleCount, totalCount) {
+    return 24 + visibleCount * 176 + Math.max(0, visibleCount - 1) * 10 + (totalCount > visibleCount ? 58 : 0);
+  }
+
+  function layoutFor(totalCount, display) {
+    const area = display.workArea;
+    const maxWidth = Math.max(1, area.width - MARGIN * 2);
+    const maxHeight = Math.max(1, area.height - MARGIN * 2);
+    const scale = Math.max(0.5, Math.min(currentFontScale, maxWidth / WINDOW_WIDTH, maxHeight / heightFor(1, totalCount)));
+    let visibleCount = Math.min(MAX_CARDS, totalCount);
+    while (visibleCount > 1 && heightFor(visibleCount, totalCount) * scale > maxHeight) visibleCount -= 1;
+    const height = heightFor(visibleCount, totalCount);
+    return { scale, visibleCount, height, overflow: Math.max(0, totalCount - visibleCount) };
+  }
+
+  function boundsFor(height, scale) {
     const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed() && candidate.title !== "Gestão Logística · Notificações");
     const targetDisplay = main && !main.isDestroyed()
       ? screen.getDisplayMatching(main.getBounds())
       : screen.getPrimaryDisplay();
     const { x, y, width, height: availableHeight } = targetDisplay.workArea;
+    const popupWidth = Math.min(Math.round(WINDOW_WIDTH * scale), width - MARGIN * 2);
+    const popupHeight = Math.min(Math.round(height * scale), availableHeight - MARGIN * 2);
     return {
-      x: Math.max(x, x + width - WINDOW_WIDTH - MARGIN),
-      y: Math.max(y, y + availableHeight - height - MARGIN),
-      width: WINDOW_WIDTH,
-      height: Math.min(height, availableHeight - MARGIN * 2),
+      x: Math.max(x, x + width - popupWidth - MARGIN),
+      y: Math.max(y, y + availableHeight - popupHeight - MARGIN),
+      width: popupWidth,
+      height: popupHeight,
     };
   }
 
-  function ensureWindow(height) {
+  function ensureWindow(height, scale) {
     if (popup && !popup.isDestroyed()) {
-      popup.setBounds(boundsFor(height));
+      popup.webContents.setZoomFactor(scale);
+      popup.setBounds(boundsFor(height, scale));
       return popup;
     }
     popup = new BrowserWindow({
       title: "Gestão Logística · Notificações",
-      width: WINDOW_WIDTH,
-      height,
+      width: Math.round(WINDOW_WIDTH * scale),
+      height: Math.round(height * scale),
       show: false,
       frame: false,
       transparent: true,
@@ -107,7 +132,8 @@ function createSolicitationPopupController({ BrowserWindow, screen, directory, o
     });
     popup.setMenu(null);
     popup.setAlwaysOnTop(true, "floating");
-    popup.setBounds(boundsFor(height));
+    popup.webContents.setZoomFactor(scale);
+    popup.setBounds(boundsFor(height, scale));
     popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     popup.webContents.on("will-navigate", (event, url) => {
       if (!url.startsWith("file:")) event.preventDefault();
@@ -120,29 +146,43 @@ function createSolicitationPopupController({ BrowserWindow, screen, directory, o
       closeTimer = null;
       popup = null;
       allowedSenderId = null;
+      currentNotices = [];
     });
     void popup.loadFile(path.join(directory, "solicitation-popup.html"));
     return popup;
   }
 
-  function present(rows, at = new Date()) {
-    const notices = (Array.isArray(rows) ? rows : []).map((row) => safeNotice(row, at)).filter(Boolean);
-    if (!notices.length) return { ok: false, reason: "empty" };
-    const visible = notices.slice(0, MAX_CARDS);
-    const height = Math.min(660, 24 + visible.length * 176 + (visible.length - 1) * 10 + (notices.length > MAX_CARDS ? 58 : 0));
-    pendingState = { notices: visible, overflow: Math.max(0, notices.length - MAX_CARDS) };
-    const host = ensureWindow(height);
+  function renderCurrent({ markPresented = false, resetTimer = false } = {}) {
+    if (!currentNotices.length) return { ok: false, reason: "empty" };
+    const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed() && candidate.title !== "Gestão Logística · Notificações");
+    const display = main ? screen.getDisplayMatching(main.getBounds()) : screen.getPrimaryDisplay();
+    const layout = layoutFor(currentNotices.length, display);
+    pendingState = { notices: currentNotices.slice(0, layout.visibleCount), overflow: layout.overflow };
+    const host = ensureWindow(layout.height, layout.scale);
     allowedSenderId = host.webContents.id;
-    host.setBounds(boundsFor(height));
+    host.setBounds(boundsFor(layout.height, layout.scale));
     host.setAlwaysOnTop(true, "floating");
     if (!host.webContents.isLoading()) host.webContents.send("popup:state", pendingState);
     host.showInactive();
-    onPresented(notices.map((notice) => notice.id));
-    clearTimeout(closeTimer);
-    closeTimer = setTimeout(() => {
-      if (popup && !popup.isDestroyed()) popup.close();
-    }, lifetimeFor(notices));
-    return { ok: true, count: notices.length, visible: visible.length, overflow: pendingState.overflow };
+    if (markPresented) onPresented(currentNotices.map((notice) => notice.id));
+    if (resetTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => {
+        if (popup && !popup.isDestroyed()) popup.close();
+      }, lifetimeFor(currentNotices));
+    }
+    return { ok: true, count: currentNotices.length, visible: pendingState.notices.length, overflow: pendingState.overflow };
+  }
+
+  function present(rows, at = new Date()) {
+    currentNotices = (Array.isArray(rows) ? rows : []).map((row) => safeNotice(row, at)).filter(Boolean);
+    if (!currentNotices.length) return { ok: false, reason: "empty" };
+    return renderCurrent({ markPresented: true, resetTimer: true });
+  }
+
+  function setFontScale(value) {
+    currentFontScale = normalizeFontScale(value);
+    if (popup && !popup.isDestroyed() && currentNotices.length) renderCurrent();
   }
 
   function acceptAction(event, input) {
@@ -162,9 +202,10 @@ function createSolicitationPopupController({ BrowserWindow, screen, directory, o
     clearTimeout(closeTimer);
     closeTimer = null;
     if (popup && !popup.isDestroyed()) popup.close();
+    else currentNotices = [];
   }
 
-  return { present, acceptAction, close, getWindow: () => popup };
+  return { present, acceptAction, close, getWindow: () => popup, setFontScale };
 }
 
 module.exports = { createSolicitationPopupController, safeNotice, lifetimeFor, MAX_CARDS, WINDOW_WIDTH, MARGIN };

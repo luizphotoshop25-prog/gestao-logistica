@@ -33,6 +33,7 @@ let backgroundOffline = false;
 let remoteConfigTimer;
 let popupController;
 let trayController;
+let popupFontScale = 1;
 process.env.GESTAO_REMOTE_CLIENT_BUILD = remoteClientBuild ? "1" : "0";
 process.env.GESTAO_BACKGROUND_START = startupBackground ? "1" : "0";
 function configureHttpTransport(apiUrl) {
@@ -125,11 +126,14 @@ function registerUiPreferencesIpc() {
     if (!trusted(event)) return { ok: false, fontScale: 1, startWithWindows: false };
     const previous = readUiPreferences(app.getPath("userData"), { defaultStartWithWindows: remoteClientBuild });
     const saved = writeUiPreferences(app.getPath("userData"), input, { defaultStartWithWindows: remoteClientBuild });
-    if (!saved.ok || !Object.hasOwn(input || {}, "startWithWindows")) return saved;
+    if (!saved.ok) return saved;
+    popupFontScale = saved.fontScale;
+    popupController?.setFontScale(popupFontScale);
+    if (!Object.hasOwn(input || {}, "startWithWindows")) return saved;
     const configured = configureWindowsLoginItem({ app, enabled: saved.startWithWindows, disabled: isolatedSmoke || !remoteClientBuild });
     if (!configured.ok) {
-      writeUiPreferences(app.getPath("userData"), { startWithWindows: previous.startWithWindows }, { defaultStartWithWindows: remoteClientBuild });
-      return { ok: false, ...previous, message: "O Windows não confirmou a preferência de inicialização." };
+      const restored = writeUiPreferences(app.getPath("userData"), { startWithWindows: previous.startWithWindows }, { defaultStartWithWindows: remoteClientBuild });
+      return { ok: false, ...saved, startWithWindows: restored.startWithWindows, message: "O Windows não confirmou a preferência de inicialização." };
     }
     return { ...saved, startWithWindows: configured.openAtLogin };
   });
@@ -421,8 +425,10 @@ function initializeRemoteDesktop() {
 }
 
 function initializePopupController() {
+  popupFontScale = readUiPreferences(app.getPath("userData"), { defaultStartWithWindows: remoteClientBuild }).fontScale;
   popupController = createSolicitationPopupController({
     BrowserWindow, screen, directory: __dirname,
+    fontScale: popupFontScale,
     onPresented: (ids) => {
       if (!process.argv.includes("--gestao-popup-test") && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("notifications:popup-presented", ids);

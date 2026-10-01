@@ -59,10 +59,15 @@ async function main() {
   const packageDirectory = path.resolve(process.env.GESTAO_PACKAGED_DIR || "release-v018-candidate/win-unpacked");
   const executable = path.join(packageDirectory, "Gestão Logística.exe");
   assert.ok(fs.existsSync(executable), `Runtime candidato não encontrado: ${executable}`);
+  const fontScale = Number(process.env.GESTAO_POPUP_TEST_FONT_SCALE || 1);
+  assert.ok([0.9, 1, 1.1, 1.2, 1.3].includes(fontScale), "A escala deve corresponder a uma preferência suportada.");
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-popup-visual-"));
   const smokeDirectory = path.join(tempRoot, "runtime");
-  const screenshotPath = path.resolve("work", "v018-popup-desktop.png");
+  const userDataDirectory = path.join(smokeDirectory, "profile");
+  const screenshotPath = path.resolve("work", `v018-popup-${Math.round(fontScale * 100)}.png`);
   fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+  fs.mkdirSync(userDataDirectory, { recursive: true });
+  fs.writeFileSync(path.join(userDataDirectory, "ui-preferences.json"), JSON.stringify({ fontScale, startWithWindows: true }), "utf8");
   const port = await freePort();
   const env = { ...process.env, GESTAO_PACKAGED_RUNTIME_SMOKE_DIR: smokeDirectory, GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE: "1" };
   for (const key of ["GESTAO_SERVER_DATA", "GESTAO_DATA_TRANSPORT", "GESTAO_API_URL", "GESTAO_CLIENT_CONFIG", "GESTAO_HTTP_TEST_PROFILE", "GESTAO_CLIENT_MODE", "ELECTRON_RUN_AS_NODE"]) delete env[key];
@@ -81,10 +86,13 @@ async function main() {
     assert.match(result, /Sessão M50258/);
     assert.match(result, /Faltam 5 minutos/);
     assert.doesNotMatch(result, /descrição sintética/i);
+    const layout = await popup.evaluate("(() => { const root = document.documentElement; const card = document.querySelector('.notice-card'); const r = card.getBoundingClientRect(); return { width: root.clientWidth, height: root.clientHeight, scrollWidth: root.scrollWidth, scrollHeight: root.scrollHeight, cardRight: r.right, cardBottom: r.bottom, cardVisible: r.width > 0 && r.height > 0 }; })()");
+    assert.ok(layout.cardVisible && layout.scrollWidth <= layout.width + 1 && layout.scrollHeight <= layout.height + 1, `Popup sem overflow em escala ${fontScale}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.cardRight <= layout.width + 1 && layout.cardBottom <= layout.height + 1, `Card sem clipping em escala ${fontScale}: ${JSON.stringify(layout)}`);
     const shot = await popup.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false, fromSurface: true });
     fs.writeFileSync(screenshotPath, Buffer.from(shot.data, "base64"));
     assert.ok(fs.statSync(screenshotPath).size > 10000, "A captura visual deve conter o popup renderizado.");
-    console.log(`Popup sintético empacotado exibido sem cadastro operacional; captura=${screenshotPath}`);
+    console.log(`Popup empacotado sem cadastro operacional; escala=${Math.round(fontScale * 100)}%; sem clipping; captura=${screenshotPath}`);
   } finally {
     popup?.socket.close();
     if (child.exitCode === null) {

@@ -140,9 +140,10 @@ async function main() {
   const originalUpdateConfig = fs.existsSync(updateConfig) ? fs.readFileSync(updateConfig) : null;
   fs.copyFileSync(archive, originalArchive);
   try {
+    fs.writeFileSync(updateConfig, "provider: github\nowner: luizphotoshop25-prog\nrepo: gestao-logistica\nreleaseType: release\n", "utf8");
     const successDirectory = path.join(tempRoot, "success");
     fs.mkdirSync(successDirectory, { recursive: true });
-    const successProcess = launchPackaged(executable, successDirectory);
+    const successProcess = launchPackaged(executable, successDirectory, true);
     const success = await waitForMarker(successDirectory, ["application-window-ready", "recovery-error"], successProcess);
     assert.equal(success.name, "application-window-ready", `Runtime real entrou em recuperação: ${JSON.stringify(success.result)}`);
     assert.ok(readMarker(successDirectory, "main-entry-loaded"), "O main process empacotado não carregou o entry point.");
@@ -170,7 +171,6 @@ async function main() {
     const brokenArchive = path.join(tempRoot, "app.asar.missing-module");
     await createPackage(extractedDirectory, brokenArchive);
     fs.copyFileSync(brokenArchive, archive);
-    fs.writeFileSync(updateConfig, "provider: github\nowner: luizphotoshop25-prog\nrepo: gestao-logistica\nreleaseType: release\n", "utf8");
     const recoveryDirectory = path.join(tempRoot, "recovery");
     fs.mkdirSync(recoveryDirectory, { recursive: true });
     const recoveryProcess = launchPackaged(executable, recoveryDirectory, true);
