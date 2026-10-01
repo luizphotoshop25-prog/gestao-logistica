@@ -193,6 +193,7 @@ export function SolicitationsPage({ currentUser, onNotice, onOpenOrder, initialS
         prazo_em: form.prazo_em ? new Date(form.prazo_em).toISOString() : undefined,
       });
       if (!result.ok) return onNotice(result.message || "Não foi possível criar a solicitação.");
+      window.dispatchEvent(new Event("gestao:solicitation-changed"));
       setCreateOpen(false);
       setForm(emptyForm);
       onNotice("Solicitação criada.");
@@ -219,6 +220,7 @@ export function SolicitationsPage({ currentUser, onNotice, onOpenOrder, initialS
         },
       });
       if (!result.ok || !result.solicitation) return onNotice(result.message || "Não foi possível atualizar a solicitação.");
+      window.dispatchEvent(new Event("gestao:solicitation-changed"));
       setSelected(result.solicitation);
       setEditing(false);
       onNotice("Solicitação atualizada.");
@@ -234,6 +236,7 @@ export function SolicitationsPage({ currentUser, onNotice, onOpenOrder, initialS
     try {
       const result = await dataService.transitionSolicitation({ id: selected.id, revision: selected.revision, action });
       if (!result.ok || !result.solicitation) return onNotice(result.message || "Não foi possível atualizar o status.");
+      window.dispatchEvent(new Event("gestao:solicitation-changed"));
       setSelected(result.solicitation);
       onNotice(messages[action]);
       await reload();

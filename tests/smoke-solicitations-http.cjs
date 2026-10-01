@@ -51,6 +51,7 @@ async function main() {
     assert.equal(notices.rows.length, 1);
     assert.equal(notices.rows[0].tipo, "ASSIGNED");
     assert.equal((await workerB.updateSolicitationNotification({ id: notices.rows[0].id, action: "seen" })).ok, false);
+    assert.equal((await workerA.updateSolicitationNotification({ id: notices.rows[0].id, action: "presented" })).ok, true);
     assert.equal((await workerA.updateSolicitationNotification({ id: notices.rows[0].id, action: "seen" })).ok, true);
     assert.equal((await workerA.pollSolicitationNotifications()).delivered.length, 0);
     assert.equal((await workerA.createSolicitation({ descricao: "Não permitido", responsavel_usuario_id: employeeA.id })).error, "FORBIDDEN");

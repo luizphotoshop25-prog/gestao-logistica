@@ -116,8 +116,8 @@ type Solicitation = {
   atrasada: boolean;
 };
 type SolicitationResult = { ok: boolean; error?: string; revisionAtual?: number; solicitation?: Solicitation; message?: string; unchanged?: boolean };
-type SolicitationNotificationType = "ASSIGNED" | "DUE_TOMORROW" | "DUE_TODAY" | "DUE_IN_ONE_HOUR" | "OVERDUE";
-type SolicitationNotification = { id: string; solicitacao_id: string; tipo: SolicitationNotificationType; prazo_snapshot: string; criado_em: string; entregue_em: string; visualizado_em: string | null; adiado_ate: string | null; resolvido_em: string | null; clicado_em: string | null; repeticoes: number; descricao: string; sessao_codigo: string | null; status: SolicitationStatus };
+type SolicitationNotificationType = "ASSIGNED" | "DUE_TOMORROW" | "DUE_TODAY" | "DUE_IN_ONE_HOUR" | "DUE_IN_15_MINUTES" | "DUE_NOW" | "OVERDUE";
+type SolicitationNotification = { id: string; solicitacao_id: string; tipo: SolicitationNotificationType; prazo_snapshot: string; criado_em: string; entregue_em: string; visualizado_em: string | null; adiado_ate: string | null; resolvido_em: string | null; clicado_em: string | null; repeticoes: number; popup_apresentado_em: string | null; popup_suprimido_em: string | null; repeticao_atraso_em: string | null; descricao: string; sessao_codigo: string | null; status: SolicitationStatus; prazo_em: string | null };
 type SolicitationNotificationResult = { ok: boolean; rows: SolicitationNotification[]; delivered?: string[]; message?: string };
 type DigitalShipmentSummary = {
   id: string; numero_pedido_digital: string; data_envio: string; criado_por_usuario_id: string | null;
@@ -207,10 +207,11 @@ type AppUpdateState =
   | { status: "error"; message: string };
 
 interface Window {
-  gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string };
+  gestaoConfig: { dataTransport: "ipc" | "http"; apiUrl: string; remoteClientBuild: boolean; backgroundStart: boolean };
+  gestaoApp: { showAuthenticationWindow(): void; setConnectionStatus(status: "connected" | "login" | "waiting"): void };
   gestaoUiPreferences: {
-    get(): Promise<{ ok: boolean; fontScale: number }>;
-    set(preferences: { fontScale: number }): Promise<{ ok: boolean; fontScale: number }>;
+    get(): Promise<{ ok: boolean; fontScale: number; startWithWindows: boolean }>;
+    set(preferences: { fontScale?: number; startWithWindows?: boolean }): Promise<{ ok: boolean; fontScale: number; startWithWindows: boolean; message?: string }>;
   };
   gestaoSession: {
     read(): Promise<string>;
@@ -252,10 +253,14 @@ interface Window {
     transitionSolicitation(input: { id: string; revision: number; action: "start" | "complete" | "cancel" | "reopen" }): Promise<SolicitationResult>;
     pollSolicitationNotifications(): Promise<SolicitationNotificationResult>;
     listSolicitationNotifications(): Promise<SolicitationNotificationResult>;
-    updateSolicitationNotification(input: { id: string; action: "seen" | "open" | "resolve" | "snooze"; minutes?: number }): Promise<{ ok: boolean; message?: string }>;
+    updateSolicitationNotification(input: { id: string; action: "seen" | "open" | "resolve" | "snooze" | "presented"; minutes?: number }): Promise<{ ok: boolean; message?: string }>;
+    presentSolicitationNotifications(rows: SolicitationNotification[]): Promise<{ ok: boolean; reason?: string; count?: number; visible?: number; overflow?: number }>;
     showNativeSolicitationNotification(input: { solicitationId: string; type: SolicitationNotificationType }): Promise<{ ok: boolean; reason?: string }>;
     onNativeSolicitationOpen(callback: (solicitationId: string) => void): () => void;
     onNativeSolicitationFallback(callback: (input: { solicitationId: string; type: SolicitationNotificationType }) => void): () => void;
+    onSolicitationPopupPresented(callback: (ids: string[]) => void): () => void;
+    onSolicitationPopupAction(callback: (input: { action: "open" | "snooze"; id: string; solicitationId: string; minutes?: number }) => void): () => void;
+    onOpenNotificationCenter(callback: () => void): () => void;
     listDigitalShipments(options?: DigitalShipmentOptions): Promise<DigitalShipmentListResult>;
     getDigitalShipment(id: string): Promise<{ ok: boolean; error?: string; message?: string; shipment?: DigitalShipment }>;
     getDigitalShipmentsForOrder(orderId: string): Promise<{ ok: boolean; error?: string; message?: string; rows?: DigitalShipmentSummary[] }>;

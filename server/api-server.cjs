@@ -193,7 +193,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       if (request.method === "GET" && url.pathname === "/api/solicitation-notifications") {
         return sendJson(response, 200, database.listSolicitationNotifications(currentUser.id), responseOrigin);
       }
-      const notificationAction = url.pathname.match(/^\/api\/solicitation-notifications\/([^/]+)\/(seen|open|resolve|snooze)$/);
+      const notificationAction = url.pathname.match(/^\/api\/solicitation-notifications\/([^/]+)\/(seen|open|resolve|snooze|presented)$/);
       if (notificationAction && request.method === "POST") {
         const body = await readJson(request);
         const result = database.updateSolicitationNotification(currentUser.id, { id: decodeURIComponent(notificationAction[1]), action: notificationAction[2], minutes: body.minutes });

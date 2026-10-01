@@ -2133,6 +2133,10 @@ function updateSolicitation({ id: solicitationId, revision, values = {} }) {
       return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de salvar." };
     }
     solicitationNotifications.reconcile(db, clean(solicitationId), now());
+    if (Object.hasOwn(validated.values, "responsavel_usuario_id")
+      && validated.values.responsavel_usuario_id !== current.responsavel_usuario_id) {
+      solicitationNotifications.assigned(db, clean(solicitationId), validated.values.responsavel_usuario_id, now());
+    }
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   return { ok: true, solicitation: getSolicitation(solicitationId) };
@@ -2168,6 +2172,7 @@ function transitionSolicitation({ id: solicitationId, revision, action, actorUse
       return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de continuar." };
     }
     solicitationNotifications.reconcile(db, clean(solicitationId), timestamp);
+    if (action === "reopen") solicitationNotifications.assigned(db, clean(solicitationId), current.responsavel_usuario_id, timestamp);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   return { ok: true, solicitation: getSolicitation(solicitationId) };

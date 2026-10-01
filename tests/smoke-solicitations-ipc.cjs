@@ -28,6 +28,7 @@ async function main() {
   await api.pollSolicitationNotifications();
   await api.listSolicitationNotifications();
   await api.updateSolicitationNotification({ id: "notification", action: "seen" });
+  await api.presentSolicitationNotifications([{ id: "notification" }]);
   assert.deepEqual(calls, [
     ["solicitations:list"],
     ["solicitations:get", "id"],
@@ -38,6 +39,7 @@ async function main() {
     ["notifications:poll"],
     ["notifications:list"],
     ["notifications:update", { id: "notification", action: "seen" }],
+    ["notifications:present-popup", [{ id: "notification" }]],
   ]);
   console.log("Solicitações IPC: métodos e notificações invocam os canais e payloads tipados esperados.");
 }

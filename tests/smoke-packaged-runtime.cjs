@@ -8,6 +8,15 @@ const builderConfig = require("../electron-builder.config.cjs");
 
 const timeoutMs = 45000;
 const explicitRuntimeModule = "electron/digital-shipment-write.cjs";
+const requiredNotificationAssets = [
+  "electron/solicitation-popup-window.cjs",
+  "electron/solicitation-popup-preload.cjs",
+  "electron/solicitation-popup-renderer.js",
+  "electron/solicitation-popup.html",
+  "electron/solicitation-popup.css",
+  "electron/windows-login-item.cjs",
+  "electron/remote-tray.cjs",
+];
 const dependencyAllowlist = new Set(["electron", ...Object.keys(require("../package.json").dependencies || {})]);
 
 function normalizeAsarPath(file) {
@@ -51,6 +60,7 @@ function auditRuntimeGraph(files, archive) {
   }
 
   assert.ok(files.has(explicitRuntimeModule), `PACKAGED_RUNTIME_MISSING_MODULE: ${explicitRuntimeModule}`);
+  for (const asset of requiredNotificationAssets) assert.ok(files.has(asset), `PACKAGED_RUNTIME_MISSING_MODULE: ${asset}`);
   for (const dependency of externalDependencies) {
     assert.ok(dependencyAllowlist.has(dependency), `Dependência de runtime ausente de package.json: ${dependency}`);
     assert.ok(files.has(`node_modules/${dependency}/package.json`), `PACKAGED_RUNTIME_MISSING_MODULE: node_modules/${dependency}/package.json`);
@@ -126,6 +136,8 @@ async function main() {
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-packaged-runtime-"));
   const originalArchive = path.join(tempRoot, "app.asar.original");
+  const updateConfig = path.join(packageDirectory, "resources", "app-update.yml");
+  const originalUpdateConfig = fs.existsSync(updateConfig) ? fs.readFileSync(updateConfig) : null;
   fs.copyFileSync(archive, originalArchive);
   try {
     const successDirectory = path.join(tempRoot, "success");
@@ -158,9 +170,10 @@ async function main() {
     const brokenArchive = path.join(tempRoot, "app.asar.missing-module");
     await createPackage(extractedDirectory, brokenArchive);
     fs.copyFileSync(brokenArchive, archive);
+    fs.writeFileSync(updateConfig, "provider: github\nowner: luizphotoshop25-prog\nrepo: gestao-logistica\nreleaseType: release\n", "utf8");
     const recoveryDirectory = path.join(tempRoot, "recovery");
     fs.mkdirSync(recoveryDirectory, { recursive: true });
-    const recoveryProcess = launchPackaged(executable, recoveryDirectory);
+    const recoveryProcess = launchPackaged(executable, recoveryDirectory, true);
     const recovery = await waitForMarker(recoveryDirectory, ["recovery-window-ready"], recoveryProcess);
     assert.equal(recovery.result.updaterEnabled, true, "O updater não ficou ativo no modo de recuperação.");
     const failure = readMarker(recoveryDirectory, "recovery-error");
@@ -170,6 +183,8 @@ async function main() {
     console.log("Falha sintética MODULE_NOT_FOUND manteve o bootstrap e o updater disponíveis em modo de recuperação.");
   } finally {
     if (fs.existsSync(originalArchive)) fs.copyFileSync(originalArchive, archive);
+    if (originalUpdateConfig) fs.writeFileSync(updateConfig, originalUpdateConfig);
+    else fs.rmSync(updateConfig, { force: true });
     const resolvedTemp = path.resolve(tempRoot);
     const resolvedOsTemp = path.resolve(os.tmpdir());
     const relative = path.relative(resolvedOsTemp, resolvedTemp);

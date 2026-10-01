@@ -2,7 +2,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { app, BrowserWindow, Notification, dialog, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, Notification, dialog, ipcMain, safeStorage, shell, Tray, Menu, screen } = require("electron");
 const database = require("./database.cjs");
 const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
@@ -14,6 +14,9 @@ const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 const { readUiPreferences, writeUiPreferences } = require("./ui-preferences.cjs");
 const { showNativeSolicitationNotification } = require("./solicitation-native-notifications.cjs");
+const { createSolicitationPopupController } = require("./solicitation-popup-window.cjs");
+const { createRemoteTray } = require("./remote-tray.cjs");
+const { isBackgroundStartup, configureWindowsLoginItem } = require("./windows-login-item.cjs");
 const { showWindowsNotificationTest } = require("./windows-notification-test.cjs");
 const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 
@@ -23,6 +26,15 @@ let clientConfig = remoteClientBuild
   ? { transport: "http", apiUrl: "", mode: "https-remote" }
   : loadClientConfig({ configPath: process.env.GESTAO_CLIENT_CONFIG || path.join(app.getPath("userData"), "gestao-client.json") });
 let httpMode = remoteClientBuild || clientConfig.transport === "http";
+const isolatedSmoke = Boolean(process.env.GESTAO_PACKAGED_RUNTIME_SMOKE_DIR);
+const popupVisualTest = process.argv.includes("--gestao-popup-test");
+const startupBackground = remoteClientBuild && isBackgroundStartup(process.argv);
+let backgroundOffline = false;
+let remoteConfigTimer;
+let popupController;
+let trayController;
+process.env.GESTAO_REMOTE_CLIENT_BUILD = remoteClientBuild ? "1" : "0";
+process.env.GESTAO_BACKGROUND_START = startupBackground ? "1" : "0";
 function configureHttpTransport(apiUrl) {
   const profile = process.env.GESTAO_HTTP_TEST_PROFILE;
   const target = new URL(apiUrl);
@@ -107,11 +119,19 @@ function registerUpdaterIpc() {
 function registerUiPreferencesIpc() {
   ipcMain.handle("ui-preferences:get", (event) => {
     if (!trusted(event)) return { ok: false, fontScale: 1 };
-    return { ok: true, ...readUiPreferences(app.getPath("userData")) };
+    return { ok: true, ...readUiPreferences(app.getPath("userData"), { defaultStartWithWindows: remoteClientBuild }) };
   });
   ipcMain.handle("ui-preferences:set", (event, input) => {
-    if (!trusted(event)) return { ok: false, fontScale: 1 };
-    return writeUiPreferences(app.getPath("userData"), input);
+    if (!trusted(event)) return { ok: false, fontScale: 1, startWithWindows: false };
+    const previous = readUiPreferences(app.getPath("userData"), { defaultStartWithWindows: remoteClientBuild });
+    const saved = writeUiPreferences(app.getPath("userData"), input, { defaultStartWithWindows: remoteClientBuild });
+    if (!saved.ok || !Object.hasOwn(input || {}, "startWithWindows")) return saved;
+    const configured = configureWindowsLoginItem({ app, enabled: saved.startWithWindows, disabled: isolatedSmoke || !remoteClientBuild });
+    if (!configured.ok) {
+      writeUiPreferences(app.getPath("userData"), { startWithWindows: previous.startWithWindows }, { defaultStartWithWindows: remoteClientBuild });
+      return { ok: false, ...previous, message: "O Windows não confirmou a preferência de inicialização." };
+    }
+    return { ...saved, startWithWindows: configured.openAtLogin };
   });
 }
 
@@ -126,6 +146,39 @@ function registerNotificationIpc() {
       });
     };
     return showNativeSolicitationNotification(Notification, mainWindow, input, showFallback);
+  });
+  ipcMain.handle("notifications:present-popup", (event, rows) => {
+    if (!trusted(event) || !popupController) return { ok: false, reason: "unauthorized-or-unavailable" };
+    const result = popupController.present(rows);
+    if (result.ok) return result;
+    for (const row of Array.isArray(rows) ? rows.slice(0, 3) : []) {
+      const fallback = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("notifications:fallback", { solicitationId: row?.solicitacao_id, type: row?.tipo });
+      };
+      const native = showNativeSolicitationNotification(Notification, mainWindow, { solicitationId: row?.solicitacao_id, type: row?.tipo }, fallback);
+      if (!native.ok) fallback();
+    }
+    return result;
+  });
+  ipcMain.on("popup:action", (event, input) => {
+    if (!popupController?.acceptAction(event, input)) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (["open", "open-center"].includes(input?.action)) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    if (["open", "snooze"].includes(input?.action)) mainWindow.webContents.send("notifications:popup-action", input);
+    else if (input?.action === "open-center") mainWindow.webContents.send("notifications:open-center");
+  });
+  ipcMain.on("app:show-authentication", (event) => {
+    if (!trusted(event) || !startupBackground) return;
+    trayController?.setConnectionStatus("login");
+    if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+  });
+  ipcMain.on("app:connection-status", (event, status) => {
+    if (!trusted(event) || !["connected", "login", "waiting"].includes(status)) return;
+    trayController?.setConnectionStatus(status);
   });
 }
 
@@ -267,7 +320,7 @@ function runThunderbirdSync() {
   }
 }
 
-function createWindow() {
+function createWindow({ showOnReady = true } = {}) {
   const devServerUrl = process.env.GESTAO_DEV_SERVER_URL || "http://127.0.0.1:8090";
   mainWindow = new BrowserWindow({
     width: 1500,
@@ -281,6 +334,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -288,7 +342,9 @@ function createWindow() {
     const allowed = app.isPackaged ? url.startsWith("file:") : url.startsWith(devServerUrl);
     if (!allowed) event.preventDefault();
   });
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.once("ready-to-show", () => { if (showOnReady) mainWindow.show(); });
+  trayController?.attachWindow(mainWindow);
+  mainWindow.on("closed", () => { mainWindow = null; });
   if (app.isPackaged) mainWindow.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
   else mainWindow.loadURL(devServerUrl);
 }
@@ -298,11 +354,25 @@ async function loadReadyRemoteConfig() {
   const result = await resolveRemoteConfig({ cachePath });
   if (!result.ok) return result;
   const health = await checkRemoteApiHealth(result.config.apiBaseUrl);
-  if (!health.ok) return { ok: false, error: "REMOTE_API_UNAVAILABLE", message: health.message };
+  if (!health.ok) return { ok: false, error: "REMOTE_API_UNAVAILABLE", message: health.message, config: result.config };
   return result;
 }
 
-async function prepareRemoteClient() {
+async function prepareRemoteClient({ background = false } = {}) {
+  if (background) {
+    const result = await loadReadyRemoteConfig();
+    if (result.ok) {
+      clientConfig.apiUrl = result.config.apiBaseUrl;
+      configureHttpTransport(clientConfig.apiUrl);
+      return true;
+    }
+    if (result.config?.apiBaseUrl) {
+      clientConfig.apiUrl = result.config.apiBaseUrl;
+      configureHttpTransport(clientConfig.apiUrl);
+    }
+    backgroundOffline = true;
+    return true;
+  }
   while (true) {
     const result = await loadReadyRemoteConfig();
     if (result.ok) {
@@ -327,14 +397,68 @@ async function prepareRemoteClient() {
   }
 }
 
+function initializeRemoteDesktop() {
+  if (!remoteClientBuild || process.platform !== "win32" || isolatedSmoke) return;
+  trayController = createRemoteTray({
+    app, Tray, Menu,
+    getMainWindow: () => mainWindow,
+    getPopup: () => popupController?.getWindow(),
+    enabled: true,
+    beforeExit: () => {
+      if (remoteConfigTimer) clearInterval(remoteConfigTimer);
+      if (siwinTimer) clearInterval(siwinTimer);
+      if (thunderbirdTimer) clearInterval(thunderbirdTimer);
+    },
+  });
+  void app.getFileIcon(process.execPath, { size: "small" }).then((icon) => trayController?.initialize(icon)).catch(() => {});
+  const saved = readUiPreferences(app.getPath("userData"), { defaultStartWithWindows: true });
+  configureWindowsLoginItem({ app, enabled: saved.startWithWindows });
+  app.on("before-quit", () => {
+    trayController?.markQuitting();
+    popupController?.close();
+  });
+  globalThis[Symbol.for("gestao-logistica.show-main")] = () => trayController?.showMainWindow();
+}
+
+function initializePopupController() {
+  popupController = createSolicitationPopupController({
+    BrowserWindow, screen, directory: __dirname,
+    onPresented: (ids) => {
+      if (!process.argv.includes("--gestao-popup-test") && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("notifications:popup-presented", ids);
+      }
+    },
+  });
+}
+
+function monitorBackgroundRemoteClient() {
+  if (!startupBackground || !remoteClientBuild) return;
+  remoteConfigTimer = setInterval(async () => {
+    const result = await loadReadyRemoteConfig();
+    if (!result.ok) {
+      trayController?.setConnectionStatus("waiting");
+      return;
+    }
+    const changed = clientConfig.apiUrl !== result.config.apiBaseUrl;
+    clientConfig.apiUrl = result.config.apiBaseUrl;
+    configureHttpTransport(clientConfig.apiUrl);
+    if (backgroundOffline || changed) {
+      backgroundOffline = false;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+    }
+  }, 60000);
+}
+
 app.whenReady().then(async () => {
-  if (remoteClientBuild && !(await prepareRemoteClient())) return;
+  if (remoteClientBuild && !(await prepareRemoteClient({ background: startupBackground || popupVisualTest }))) return;
+  initializeRemoteDesktop();
   if (!httpMode) database.initialize(app);
   registerSessionIpc();
   registerIpc();
   registerUpdaterIpc();
   registerUiPreferencesIpc();
   registerNotificationIpc();
+  initializePopupController();
   updaterController = globalThis[UPDATER_KEY] || createUpdaterController({
     app,
     autoUpdater,
@@ -345,7 +469,19 @@ app.whenReady().then(async () => {
   updaterController.setSend?.((state) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
   });
-  createWindow();
+  createWindow({ showOnReady: !startupBackground });
+  if (startupBackground && backgroundOffline) trayController?.setConnectionStatus("waiting");
+  monitorBackgroundRemoteClient();
+  if (app.isPackaged && process.platform === "win32" && process.argv.includes("--gestao-popup-test")) {
+    setTimeout(() => popupController?.present([{
+      id: "48c9f2d1-5b09-41b7-92ed-1a38dc53de23",
+      solicitacao_id: "48c9f2d1-5b09-41b7-92ed-1a38dc53de23",
+      tipo: "DUE_IN_15_MINUTES",
+      sessao_codigo: "M50258",
+      prazo_em: new Date(Date.now() + 5 * 60000).toISOString(),
+      descricao: "A descrição sintética não deve aparecer no popup.",
+    }]), 1700);
+  }
   runWindowsNotificationTest();
   const interactiveSmoke = app.isPackaged && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
   if (interactiveSmoke) setTimeout(() => app.quit(), 8000);
@@ -366,5 +502,5 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (siwinTimer) clearInterval(siwinTimer);
   if (thunderbirdTimer) clearInterval(thunderbirdTimer);
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin" && !remoteClientBuild) app.quit();
 });

@@ -31,6 +31,7 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "pollSolicitationNotifications"
   | "listSolicitationNotifications"
   | "updateSolicitationNotification"
+  | "presentSolicitationNotifications"
   | "listDigitalShipments"
   | "getDigitalShipment"
   | "getDigitalShipmentsForOrder"
@@ -81,6 +82,7 @@ export const ipcDataService: DataService = {
   pollSolicitationNotifications: () => window.gestaoAPI.pollSolicitationNotifications(),
   listSolicitationNotifications: () => window.gestaoAPI.listSolicitationNotifications(),
   updateSolicitationNotification: (input) => window.gestaoAPI.updateSolicitationNotification(input),
+  presentSolicitationNotifications: (rows) => window.gestaoAPI.presentSolicitationNotifications(rows),
   listDigitalShipments: (options) => window.gestaoAPI.listDigitalShipments(options),
   getDigitalShipment: (id) => window.gestaoAPI.getDigitalShipment(id),
   getDigitalShipmentsForOrder: (orderId) => window.gestaoAPI.getDigitalShipmentsForOrder(orderId),
@@ -164,6 +166,7 @@ export function createHttpDataService(apiUrl: string): DataService {
     pollSolicitationNotifications: () => request("/api/solicitation-notifications/poll", { method: "POST" }),
     listSolicitationNotifications: () => request("/api/solicitation-notifications"),
     updateSolicitationNotification: ({ id, action, minutes }) => request(`/api/solicitation-notifications/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ minutes }) }),
+    presentSolicitationNotifications: (rows) => window.gestaoAPI.presentSolicitationNotifications(rows),
     listDigitalShipments: (options = {}) => {
       const query = new URLSearchParams({ search: options.search || "", page: String(options.page || 1), pageSize: String(options.pageSize || 20), sort: options.sort || "date-desc", from: options.from || "", to: options.to || "" });
       return request(`/api/digital-shipments?${query.toString()}`);

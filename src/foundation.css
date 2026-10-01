@@ -214,6 +214,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .appearance-dialog-header h2{margin:5px 0 0;font-size:var(--type-22);line-height:1.25}
 .appearance-close{flex:none;width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--ui-border);border-radius:8px;background:#fff;color:var(--ui-text)}
 .appearance-setting{padding-top:20px}
+.appearance-startup-setting{display:flex;align-items:flex-start;gap:12px;margin:0 0 22px;padding:14px;border:1px solid var(--ui-border);border-radius:11px;background:#f8faff;cursor:pointer}
+.appearance-startup-setting input{flex:none;width:18px;height:18px;margin:2px 0 0;accent-color:var(--ui-primary)}
+.appearance-startup-setting span{display:grid;gap:4px}
+.appearance-startup-setting strong{font-size:var(--type-14);line-height:1.4}
+.appearance-startup-setting small{color:var(--ui-muted);font-size:var(--type-12);line-height:1.45}
 .appearance-setting-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .appearance-setting-heading h3{margin:0;font-size:var(--type-16);line-height:1.35}
 .appearance-setting-heading p{margin:5px 0 0;color:var(--ui-muted);font-size:var(--type-12);line-height:1.5}

@@ -15,26 +15,29 @@ function preferencePath(userDataPath) {
   return path.join(userDataPath, PREFERENCE_FILE);
 }
 
-function readUiPreferences(userDataPath) {
+function readUiPreferences(userDataPath, { defaultStartWithWindows = false } = {}) {
   try {
     const parsed = JSON.parse(fs.readFileSync(preferencePath(userDataPath), "utf8"));
-    return { fontScale: normalizeFontScale(parsed?.fontScale) };
+    return { fontScale: normalizeFontScale(parsed?.fontScale), startWithWindows: typeof parsed?.startWithWindows === "boolean" ? parsed.startWithWindows : defaultStartWithWindows };
   } catch {
-    return { fontScale: 1 };
+    return { fontScale: 1, startWithWindows: defaultStartWithWindows };
   }
 }
 
-function writeUiPreferences(userDataPath, input) {
-  const fontScale = normalizeFontScale(input?.fontScale);
-  if (fontScale !== input?.fontScale) return { ok: false, fontScale: readUiPreferences(userDataPath).fontScale };
+function writeUiPreferences(userDataPath, input, { defaultStartWithWindows = false } = {}) {
+  const current = readUiPreferences(userDataPath, { defaultStartWithWindows });
+  const fontScale = input && Object.hasOwn(input, "fontScale") ? normalizeFontScale(input.fontScale) : current.fontScale;
+  const startWithWindows = input && Object.hasOwn(input, "startWithWindows") ? input.startWithWindows : current.startWithWindows;
+  if (fontScale !== (input && Object.hasOwn(input, "fontScale") ? input.fontScale : fontScale)
+    || typeof startWithWindows !== "boolean") return { ok: false, ...current };
 
   const target = preferencePath(userDataPath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
   try {
-    fs.writeFileSync(temporary, `${JSON.stringify({ fontScale }, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    fs.writeFileSync(temporary, `${JSON.stringify({ fontScale, startWithWindows }, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
     fs.renameSync(temporary, target);
-    return { ok: true, fontScale };
+    return { ok: true, fontScale, startWithWindows };
   } finally {
     try { fs.rmSync(temporary, { force: true }); } catch { /* Best effort cleanup. */ }
   }

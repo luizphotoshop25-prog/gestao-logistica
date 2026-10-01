@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-v*-candidate*/
 release-updater-localdist/
 release-updater-*/
 phase07-validation/

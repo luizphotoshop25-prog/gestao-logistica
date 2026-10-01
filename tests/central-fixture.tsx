@@ -53,4 +53,4 @@ if(params.get('transport')==='http') {
 }
 window.recoverFixture = () => {state='data';};
 const {App} = await import('../src/App');
-createRoot(document.getElementById('root')).render(<React.StrictMode><Tooltip.Provider><App currentUser={user}/></Tooltip.Provider></React.StrictMode>);
+createRoot(document.getElementById('root')).render(<React.StrictMode><Tooltip.Provider><App currentUser={user} fontScale={1} startWithWindows={false} onFontScalePreview={() => {}} onFontScaleApply={async () => true} onStartWithWindowsApply={async () => true}/></Tooltip.Provider></React.StrictMode>);

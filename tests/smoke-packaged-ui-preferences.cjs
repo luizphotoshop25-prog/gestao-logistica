@@ -98,7 +98,7 @@ async function main() {
     session = await launch(executable, smokeDirectory);
     const { runtime } = session;
     const initial = await runtime.evaluate("window.gestaoUiPreferences.get()");
-    assert.deepEqual(initial, { ok: true, fontScale: 1 });
+    assert.deepEqual(initial, { ok: true, fontScale: 1, startWithWindows: false });
     const openSettings = async (target = runtime) => { await target.evaluate("document.querySelector('.appearance-trigger').click(); true"); await waitFor(() => target.evaluate("Boolean(document.querySelector('.appearance-dialog'))"), "diálogo Aparência"); };
     const selectScale = async (percent) => runtime.evaluate(`document.querySelector('.appearance-options button:nth-child(${[90, 100, 110, 120, 130].indexOf(percent) + 1})').click(); true`);
     const apply = async () => { await runtime.evaluate("document.querySelector('.appearance-apply').click(); true"); await waitFor(() => runtime.evaluate("!document.querySelector('.appearance-dialog')"), "fechamento ao aplicar"); };

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   pollSolicitationNotifications: () => ipcRenderer.invoke("notifications:poll"),
   listSolicitationNotifications: () => ipcRenderer.invoke("notifications:list"),
   updateSolicitationNotification: (input) => ipcRenderer.invoke("notifications:update", input),
+  presentSolicitationNotifications: (rows) => ipcRenderer.invoke("notifications:present-popup", rows),
   showNativeSolicitationNotification: (input) => ipcRenderer.invoke("notifications:native", input),
   onNativeSolicitationOpen: (callback) => {
     const listener = (_event, solicitationId) => callback(solicitationId);
@@ -53,6 +54,21 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
     const listener = (_event, input) => callback(input);
     ipcRenderer.on("notifications:fallback", listener);
     return () => ipcRenderer.removeListener("notifications:fallback", listener);
+  },
+  onSolicitationPopupPresented: (callback) => {
+    const listener = (_event, ids) => callback(ids);
+    ipcRenderer.on("notifications:popup-presented", listener);
+    return () => ipcRenderer.removeListener("notifications:popup-presented", listener);
+  },
+  onSolicitationPopupAction: (callback) => {
+    const listener = (_event, input) => callback(input);
+    ipcRenderer.on("notifications:popup-action", listener);
+    return () => ipcRenderer.removeListener("notifications:popup-action", listener);
+  },
+  onOpenNotificationCenter: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("notifications:open-center", listener);
+    return () => ipcRenderer.removeListener("notifications:open-center", listener);
   },
   listDigitalShipments: (options) => ipcRenderer.invoke("digital-shipments:list", options),
   getDigitalShipment: (id) => ipcRenderer.invoke("digital-shipments:get", id),
@@ -73,6 +89,13 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
 contextBridge.exposeInMainWorld("gestaoConfig", {
   dataTransport: process.env.GESTAO_DATA_TRANSPORT === "http" ? "http" : "ipc",
   apiUrl: process.env.GESTAO_DATA_TRANSPORT === "http" ? process.env.GESTAO_API_URL || "" : "",
+  remoteClientBuild: process.env.GESTAO_REMOTE_CLIENT_BUILD === "1",
+  backgroundStart: process.env.GESTAO_BACKGROUND_START === "1",
+});
+
+contextBridge.exposeInMainWorld("gestaoApp", {
+  showAuthenticationWindow: () => ipcRenderer.send("app:show-authentication"),
+  setConnectionStatus: (status) => ipcRenderer.send("app:connection-status", status),
 });
 
 contextBridge.exposeInMainWorld("gestaoSession", {

@@ -16,7 +16,10 @@ if (smokeDirectory) {
 const ownsInstanceLock = app.requestSingleInstanceLock();
 if (ownsInstanceLock) {
   app.on("second-instance", () => {
-    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    const showMain = globalThis[Symbol.for("gestao-logistica.show-main")];
+    if (typeof showMain === "function") { showMain(); return; }
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()
+      && !candidate.webContents.getURL().includes("solicitation-popup.html"));
     if (!window) return;
     if (window.isMinimized()) window.restore();
     window.show();
