@@ -116,6 +116,9 @@ type Solicitation = {
   atrasada: boolean;
 };
 type SolicitationResult = { ok: boolean; error?: string; revisionAtual?: number; solicitation?: Solicitation; message?: string; unchanged?: boolean };
+type SolicitationNotificationType = "ASSIGNED" | "DUE_TOMORROW" | "DUE_TODAY" | "DUE_IN_ONE_HOUR" | "OVERDUE";
+type SolicitationNotification = { id: string; solicitacao_id: string; tipo: SolicitationNotificationType; prazo_snapshot: string; criado_em: string; entregue_em: string; visualizado_em: string | null; adiado_ate: string | null; resolvido_em: string | null; clicado_em: string | null; repeticoes: number; descricao: string; sessao_codigo: string | null; status: SolicitationStatus };
+type SolicitationNotificationResult = { ok: boolean; rows: SolicitationNotification[]; delivered?: string[]; message?: string };
 type DigitalShipmentSummary = {
   id: string; numero_pedido_digital: string; data_envio: string; criado_por_usuario_id: string | null;
   criado_em: string; atualizado_em: string; revision: number; registrado_por: string;
@@ -247,6 +250,11 @@ interface Window {
     createSolicitation(input: { descricao: string; observacao?: string; sessao_codigo?: string; responsavel_usuario_id: string; prazo_em?: string }): Promise<SolicitationResult>;
     updateSolicitation(input: { id: string; revision: number; values: Partial<Pick<Solicitation, "descricao" | "observacao" | "sessao_codigo" | "responsavel_usuario_id" | "prazo_em">> }): Promise<SolicitationResult>;
     transitionSolicitation(input: { id: string; revision: number; action: "start" | "complete" | "cancel" | "reopen" }): Promise<SolicitationResult>;
+    pollSolicitationNotifications(): Promise<SolicitationNotificationResult>;
+    listSolicitationNotifications(): Promise<SolicitationNotificationResult>;
+    updateSolicitationNotification(input: { id: string; action: "seen" | "open" | "resolve" | "snooze"; minutes?: number }): Promise<{ ok: boolean; message?: string }>;
+    showNativeSolicitationNotification(input: { solicitationId: string; type: SolicitationNotificationType }): Promise<{ ok: boolean }>;
+    onNativeSolicitationOpen(callback: (solicitationId: string) => void): () => void;
     listDigitalShipments(options?: DigitalShipmentOptions): Promise<DigitalShipmentListResult>;
     getDigitalShipment(id: string): Promise<{ ok: boolean; error?: string; message?: string; shipment?: DigitalShipment }>;
     getDigitalShipmentsForOrder(orderId: string): Promise<{ ok: boolean; error?: string; message?: string; rows?: DigitalShipmentSummary[] }>;

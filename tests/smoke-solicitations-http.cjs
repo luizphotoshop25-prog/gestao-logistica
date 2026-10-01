@@ -46,6 +46,13 @@ async function main() {
     assert.equal((await workerA.listSolicitations()).rows.length, 1);
     assert.equal((await workerB.listSolicitations()).rows.length, 0);
     assert.equal((await workerB.getSolicitation(created.solicitation.id)).error, "NOT_FOUND");
+    assert.equal((await manager.listSolicitationNotifications()).rows.length, 0);
+    const notices = await workerA.listSolicitationNotifications();
+    assert.equal(notices.rows.length, 1);
+    assert.equal(notices.rows[0].tipo, "ASSIGNED");
+    assert.equal((await workerB.updateSolicitationNotification({ id: notices.rows[0].id, action: "seen" })).ok, false);
+    assert.equal((await workerA.updateSolicitationNotification({ id: notices.rows[0].id, action: "seen" })).ok, true);
+    assert.equal((await workerA.pollSolicitationNotifications()).delivered.length, 0);
     assert.equal((await workerA.createSolicitation({ descricao: "Não permitido", responsavel_usuario_id: employeeA.id })).error, "FORBIDDEN");
     assert.equal((await workerA.updateSolicitation({ id: created.solicitation.id, revision: 1, values: { descricao: "Alteração vedada" } })).error, "FORBIDDEN");
     assert.equal((await workerB.transitionSolicitation({ id: created.solicitation.id, revision: 1, action: "start" })).error, "NOT_FOUND");

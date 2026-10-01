@@ -25,6 +25,9 @@ async function main() {
   await api.createSolicitation(input);
   await api.updateSolicitation(update);
   await api.transitionSolicitation(transition);
+  await api.pollSolicitationNotifications();
+  await api.listSolicitationNotifications();
+  await api.updateSolicitationNotification({ id: "notification", action: "seen" });
   assert.deepEqual(calls, [
     ["solicitations:list"],
     ["solicitations:get", "id"],
@@ -32,8 +35,11 @@ async function main() {
     ["solicitations:create", input],
     ["solicitations:update", update],
     ["solicitations:transition", transition],
+    ["notifications:poll"],
+    ["notifications:list"],
+    ["notifications:update", { id: "notification", action: "seen" }],
   ]);
-  console.log("Solicitações IPC: os seis métodos do preload invocam os canais e payloads tipados esperados.");
+  console.log("Solicitações IPC: métodos e notificações invocam os canais e payloads tipados esperados.");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

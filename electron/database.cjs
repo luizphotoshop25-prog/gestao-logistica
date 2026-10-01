@@ -5,6 +5,7 @@ const { applyDigitalQuantitiesMigration } = require("./digital-quantities-migrat
 const { insertShipmentWithEvent, normalizeDigitalShipmentNumber,
   validateShipmentQuantities } = require("./digital-shipment-write.cjs");
 const { DatabaseSync } = require("node:sqlite");
+const solicitationNotifications = require("./solicitation-notifications.cjs");
 
 let db;
 let dataDirectory;
@@ -237,6 +238,7 @@ function initializeDataDirectory(directory) {
   ensureEventColumns();
   ensureDigitalShipmentSchema();
   applyDigitalQuantitiesMigration(db);
+  solicitationNotifications.install(db, createSafetyBackup);
   initializeTreatmentAssignment();
   if (!getConfiguration("migracao_selecoes_conferidas_v1")) {
     db.prepare("UPDATE selecoes_email SET conferida_em=coalesce(conferida_em,processado_em)").run();
@@ -1975,6 +1977,7 @@ function createSolicitation(input) {
     .run(solicitationId, validated.values.descricao, validated.values.observacao, validated.values.sessao_codigo,
       validated.values.responsavel_usuario_id, clean(input?.criado_por_usuario_id) || null,
       clean(input?.criado_por_nome) || "Usuário local", validated.values.prazo_em, timestamp, timestamp, timestamp);
+  solicitationNotifications.assigned(db, solicitationId, validated.values.responsavel_usuario_id, timestamp);
   return { ok: true, solicitation: getSolicitation(solicitationId) };
 }
 
@@ -1997,6 +2000,7 @@ function updateSolicitation({ id: solicitationId, revision, values = {} }) {
       db.exec("ROLLBACK");
       return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de salvar." };
     }
+    solicitationNotifications.reconcile(db, clean(solicitationId), now());
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   return { ok: true, solicitation: getSolicitation(solicitationId) };
@@ -2031,9 +2035,22 @@ function transitionSolicitation({ id: solicitationId, revision, action, actorUse
       db.exec("ROLLBACK");
       return { ok: false, error: "REVISION_CONFLICT", message: "A solicitação foi alterada por outra pessoa. Atualize os dados antes de continuar." };
     }
+    solicitationNotifications.reconcile(db, clean(solicitationId), timestamp);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   return { ok: true, solicitation: getSolicitation(solicitationId) };
+}
+
+function pollSolicitationNotifications(userId, at = new Date()) {
+  const delivered = solicitationNotifications.poll(db, clean(userId), at);
+  const rows = solicitationNotifications.list(db, clean(userId));
+  return { ok: true, delivered, rows };
+}
+function listSolicitationNotifications(userId) {
+  return { ok: true, rows: solicitationNotifications.list(db, clean(userId)) };
+}
+function updateSolicitationNotification(userId, input, at = new Date()) {
+  return solicitationNotifications.update(db, clean(userId), clean(input?.id), input?.action, Number(input?.minutes), at);
 }
 
 module.exports = {
@@ -2074,6 +2091,9 @@ module.exports = {
   createSolicitation,
   updateSolicitation,
   transitionSolicitation,
+  pollSolicitationNotifications,
+  listSolicitationNotifications,
+  updateSolicitationNotification,
   addAttachment,
   getAttachmentPath,
   getSiwinStatus,

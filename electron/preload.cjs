@@ -40,6 +40,15 @@ contextBridge.exposeInMainWorld("gestaoAPI", {
   createSolicitation: (input) => ipcRenderer.invoke("solicitations:create", input),
   updateSolicitation: (input) => ipcRenderer.invoke("solicitations:update", input),
   transitionSolicitation: (input) => ipcRenderer.invoke("solicitations:transition", input),
+  pollSolicitationNotifications: () => ipcRenderer.invoke("notifications:poll"),
+  listSolicitationNotifications: () => ipcRenderer.invoke("notifications:list"),
+  updateSolicitationNotification: (input) => ipcRenderer.invoke("notifications:update", input),
+  showNativeSolicitationNotification: (input) => ipcRenderer.invoke("notifications:native", input),
+  onNativeSolicitationOpen: (callback) => {
+    const listener = (_event, solicitationId) => callback(solicitationId);
+    ipcRenderer.on("notifications:open", listener);
+    return () => ipcRenderer.removeListener("notifications:open", listener);
+  },
   listDigitalShipments: (options) => ipcRenderer.invoke("digital-shipments:list", options),
   getDigitalShipment: (id) => ipcRenderer.invoke("digital-shipments:get", id),
   getDigitalShipmentsForOrder: (orderId) => ipcRenderer.invoke("digital-shipments:for-order", orderId),

@@ -2,7 +2,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, Notification, dialog, ipcMain, safeStorage, shell } = require("electron");
 const database = require("./database.cjs");
 const { previewSpreadsheet } = require("./importer.cjs");
 const siwin = require("./siwin.cjs");
@@ -13,6 +13,7 @@ const { loadClientBuild } = require("./client-build.cjs");
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 const { readUiPreferences, writeUiPreferences } = require("./ui-preferences.cjs");
+const { showNativeSolicitationNotification } = require("./solicitation-native-notifications.cjs");
 const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 
 const buildMarker = loadClientBuild({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
@@ -113,6 +114,13 @@ function registerUiPreferencesIpc() {
   });
 }
 
+function registerNotificationIpc() {
+  ipcMain.handle("notifications:native", (event, input) => {
+    if (!trusted(event)) return { ok: false };
+    return showNativeSolicitationNotification(Notification, mainWindow, input);
+  });
+}
+
 function writeUpdaterLog(message) {
   try {
     const logDirectory = path.join(app.getPath("userData"), "logs");
@@ -151,6 +159,9 @@ function registerIpc() {
   }));
   handle("solicitations:update", (input) => database.updateSolicitation(input));
   handle("solicitations:transition", (input) => database.transitionSolicitation({ ...input, actorRole: "coordinator" }));
+  handle("notifications:poll", () => database.pollSolicitationNotifications(database.getLocalOperatorId()));
+  handle("notifications:list", () => database.listSolicitationNotifications(database.getLocalOperatorId()));
+  handle("notifications:update", (input) => database.updateSolicitationNotification(database.getLocalOperatorId(), input));
   handle("digital-shipments:list", (options) => database.listDigitalShipments(options));
   handle("digital-shipments:get", (id) => {
     const shipment = database.getDigitalShipment(id);
@@ -297,12 +308,14 @@ async function prepareRemoteClient() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === "win32") app.setAppUserModelId("br.com.manoelguimaraes.gestaologistica");
   if (remoteClientBuild && !(await prepareRemoteClient())) return;
   if (!httpMode) database.initialize(app);
   registerSessionIpc();
   registerIpc();
   registerUpdaterIpc();
   registerUiPreferencesIpc();
+  registerNotificationIpc();
   updaterController = globalThis[UPDATER_KEY] || createUpdaterController({
     app,
     autoUpdater,

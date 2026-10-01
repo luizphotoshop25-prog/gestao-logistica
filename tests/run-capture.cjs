@@ -21,7 +21,7 @@ async function main() {
     await new Promise((resolve, reject) => {
       const electron = spawn(require("electron"), [path.join(__dirname, "capture-ui.cjs")], { env, stdio: "inherit", windowsHide: true });
       let expired = false;
-      const timer = setTimeout(() => { expired = true; electron.kill(); }, 240000);
+      const timer = setTimeout(() => { expired = true; electron.kill(); }, 360000);
       electron.once("error", (error) => { clearTimeout(timer); reject(error); });
       electron.once("exit", (code) => {
         clearTimeout(timer);

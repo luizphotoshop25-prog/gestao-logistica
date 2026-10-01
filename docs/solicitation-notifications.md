@@ -1,0 +1,7 @@
+# Notificações de Solicitações
+
+`prazo_em` já é um instante ISO criado por um campo `datetime-local`; portanto todos os prazos existentes têm horário explícito. A regra de atraso permanece a comparação com esse instante. D-1 e D0 são apresentados a partir das 09:00 de `America/Sao_Paulo`; T-1H começa uma hora antes do instante e OVERDUE no instante do vencimento. Solicitações sem prazo não geram estágios de prazo. O módulo `electron/solicitation-notifications.cjs` é a única fonte desse cálculo para HTTP e IPC.
+
+O cliente consulta a API ao abrir, a cada 60 segundos e ao recuperar foco. O SQLite guarda uma linha por solicitação, responsável, prazo e estágio, impedindo repetição em polls sucessivos. Snooze é explícito e os avisos anteriores são resolvidos quando o prazo, responsável ou status mudam. Se o aplicativo estiver totalmente fechado, o estágio atual é calculado quando ele abrir novamente. Não existe serviço oculto novo.
+
+Migração controlada do piloto: `node scripts/migrate-solicitation-notifications.cjs E:\GestaoLogistica_Server_Pilot\data`. O script exige `integrity_check=ok` e `foreign_key_check` vazio antes de criar um backup consistente com `VACUUM INTO`. Cria a tabela e os índices em transação; a segunda execução é idempotente. Verifica novamente integridade e chaves estrangeiras. Em caso de falha antes do commit, o SQLite faz rollback. Se uma falha posterior exigir restauração, pare a API, preserve a cópia atual para análise e restaure o backup criado pelo script antes de reiniciar a API. Nunca sobrescreva o banco com a API ativa.

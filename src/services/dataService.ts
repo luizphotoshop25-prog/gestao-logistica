@@ -28,6 +28,9 @@ export type DataService = Pick<Window["gestaoAPI"],
   | "createSolicitation"
   | "updateSolicitation"
   | "transitionSolicitation"
+  | "pollSolicitationNotifications"
+  | "listSolicitationNotifications"
+  | "updateSolicitationNotification"
   | "listDigitalShipments"
   | "getDigitalShipment"
   | "getDigitalShipmentsForOrder"
@@ -75,6 +78,9 @@ export const ipcDataService: DataService = {
   createSolicitation: (input) => window.gestaoAPI.createSolicitation(input),
   updateSolicitation: (input) => window.gestaoAPI.updateSolicitation(input),
   transitionSolicitation: (input) => window.gestaoAPI.transitionSolicitation(input),
+  pollSolicitationNotifications: () => window.gestaoAPI.pollSolicitationNotifications(),
+  listSolicitationNotifications: () => window.gestaoAPI.listSolicitationNotifications(),
+  updateSolicitationNotification: (input) => window.gestaoAPI.updateSolicitationNotification(input),
   listDigitalShipments: (options) => window.gestaoAPI.listDigitalShipments(options),
   getDigitalShipment: (id) => window.gestaoAPI.getDigitalShipment(id),
   getDigitalShipmentsForOrder: (orderId) => window.gestaoAPI.getDigitalShipmentsForOrder(orderId),
@@ -155,6 +161,9 @@ export function createHttpDataService(apiUrl: string): DataService {
     createSolicitation: (input) => request("/api/solicitations", { method: "POST", body: JSON.stringify(input) }),
     updateSolicitation: (input) => request(`/api/solicitations/${encodeURIComponent(input.id)}`, { method: "PATCH", body: JSON.stringify({ revision: input.revision, values: input.values }) }),
     transitionSolicitation: ({ id, revision, action }) => request(`/api/solicitations/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ revision }) }),
+    pollSolicitationNotifications: () => request("/api/solicitation-notifications/poll", { method: "POST" }),
+    listSolicitationNotifications: () => request("/api/solicitation-notifications"),
+    updateSolicitationNotification: ({ id, action, minutes }) => request(`/api/solicitation-notifications/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ minutes }) }),
     listDigitalShipments: (options = {}) => {
       const query = new URLSearchParams({ search: options.search || "", page: String(options.page || 1), pageSize: String(options.pageSize || 20), sort: options.sort || "date-desc", from: options.from || "", to: options.to || "" });
       return request(`/api/digital-shipments?${query.toString()}`);

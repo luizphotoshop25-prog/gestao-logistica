@@ -32,6 +32,7 @@ import { OrderClientProfilePopover, type ClientProfileTarget } from "./component
 import { Pagination } from "./components/Pagination";
 import { TableSkeleton } from "./components/TableSkeleton";
 import { SolicitationsPage } from "./components/SolicitationsPage";
+import { SolicitationNotifications } from "./components/SolicitationNotifications";
 import { DigitalOrderHistory, DigitalShipmentsPage } from "./components/DigitalShipmentsPage";
 import { sortOrdersBySession } from "./utils/session-sort";
 import { AppearanceSettings } from "./components/AppearanceSettings";
@@ -100,6 +101,14 @@ const formatCurrency = (value: number) => new Intl.NumberFormat("pt-BR", {
 export function App({ currentUser, onLogout, fontScale, onFontScalePreview, onFontScaleApply }: { currentUser: AuthUser; onLogout?: () => void; fontScale: number; onFontScalePreview: (scale: number) => void; onFontScaleApply: (scale: number) => Promise<boolean> }) {
   const [centralQueue, setCentralQueue] = useState("needs_me");
   const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
+  const openNotifiedSolicitation = useCallback(async (id: string) => {
+    try {
+      const result = await dataService.getSolicitation(id);
+      if (!result.ok || !result.solicitation) return;
+      setCentralTask(result.solicitation);
+      setWorkspacePage("solicitations");
+    } catch { /* The notification stays available in the bell for a retry. */ }
+  }, []);
   const [orderPreviewId, setOrderPreviewId] = useState<string | null>(null);
   const [clientProfileTarget, setClientProfileTarget] = useState<ClientProfileTarget | null>(null);
   const [clientProfileCacheVersion, setClientProfileCacheVersion] = useState(0);
@@ -626,6 +635,7 @@ export function App({ currentUser, onLogout, fontScale, onFontScalePreview, onFo
       </nav>
       <header className="shell-header">
         <Hint label="Buscar pedidos e acessar atalhos (Ctrl+K)"><button className="shell-search ui-button" onClick={() => setCommandOpen(true)}><Search size={16} />Buscar pedidos e atalhos <kbd>Ctrl K</kbd></button></Hint>
+        <SolicitationNotifications onOpen={openNotifiedSolicitation} />
         <div className="shell-account"><span className="shell-connection">{window.gestaoConfig.dataTransport === 'http' ? 'Acesso remoto' : 'Acesso local'}</span><div><strong>{currentUser.nome}</strong><small>{currentUser.role === 'employee' ? 'Funcionário' : 'Coordenador'}</small></div>{onLogout && <button className="ui-button" onClick={() => { if (detail && formDirty) setConfirmation({ title: "Sair sem salvar?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e sair", tone: "warning", onConfirm: () => onLogout() }); else onLogout(); }}>Sair</button>}</div>
         {window.gestaoConfig.dataTransport !== 'http' && <IntegrationMenu busy={busy} lastSync={lastSiwinSync} onThunderbird={() => void syncThunderbird()} onSiwin={() => void syncSiwin()} onImport={() => void openImport()} />}
       </header>

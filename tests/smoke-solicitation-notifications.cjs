@@ -1,0 +1,76 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const database = require("../electron/database.cjs");
+const { currentStage } = require("../electron/solicitation-notifications.cjs");
+const { createPasswordHash } = require("../server/api-server.cjs");
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "gestao-notifications-"));
+try {
+  database.initializeDataDirectory(root);
+  const createUser = (name, role) => {
+    const result = database.createUser({ nome: name, usuario: name, role, senhaHash: createPasswordHash("test-only") });
+    assert.equal(result.ok, true);
+    return result.user;
+  };
+  const coordinator = createUser("coordinator-test", "coordinator");
+  const employee = createUser("employee-test", "employee");
+  const other = createUser("other-test", "employee");
+  const due = "2026-10-02T17:00:00.000Z"; // 14:00 in Sao Paulo.
+  assert.equal(currentStage(due, true, new Date("2026-09-30T16:59:00Z")), null);
+  assert.equal(currentStage(due, true, new Date("2026-10-01T12:00:00Z")), "DUE_TOMORROW");
+  assert.equal(currentStage(due, true, new Date("2026-10-02T12:00:00Z")), "DUE_TODAY");
+  assert.equal(currentStage(due, true, new Date("2026-10-02T15:59:00Z")), "DUE_TODAY");
+  assert.equal(currentStage(due, true, new Date("2026-10-02T16:00:00Z")), "DUE_IN_ONE_HOUR");
+  assert.equal(currentStage(due, true, new Date(due)), "OVERDUE");
+  assert.equal(currentStage(due, false, new Date("2026-10-02T17:00:00Z")), "DUE_TODAY");
+  assert.equal(currentStage(due, false, new Date("2026-10-03T03:00:00Z")), "OVERDUE");
+
+  const request = database.createSolicitation({ descricao: "Fixture de notificação", responsavel_usuario_id: employee.id, criado_por_usuario_id: coordinator.id, prazo_em: due });
+  assert.equal(request.ok, true);
+  const requestId = request.solicitation.id;
+  assert.equal(database.pollSolicitationNotifications(other.id, new Date("2026-10-02T12:00:00Z")).delivered.length, 0);
+  const atDay = new Date("2026-10-02T12:00:00Z");
+  const delivered = database.pollSolicitationNotifications(employee.id, atDay);
+  assert.equal(delivered.delivered.length, 1);
+  assert.equal(delivered.rows.find((item) => item.id === delivered.delivered[0]).tipo, "DUE_TODAY");
+  for (let i = 0; i < 100; i++) assert.equal(database.pollSolicitationNotifications(employee.id, atDay).delivered.length, 0);
+  const notificationId = delivered.delivered[0];
+  assert.equal(database.updateSolicitationNotification(other.id, { id: notificationId, action: "snooze", minutes: 30 }).ok, false);
+  assert.equal(database.updateSolicitationNotification(employee.id, { id: notificationId, action: "snooze", minutes: 30 }, atDay).ok, true);
+  assert.equal(database.pollSolicitationNotifications(employee.id, atDay).delivered.length, 0);
+  assert.equal(database.pollSolicitationNotifications(employee.id, new Date("2026-10-02T12:29:00Z")).delivered.length, 0);
+  assert.equal(database.pollSolicitationNotifications(employee.id, new Date("2026-10-02T12:30:00Z")).delivered.length, 1);
+  assert.equal(database.pollSolicitationNotifications(employee.id, new Date("2026-10-02T12:31:00Z")).delivered.length, 0);
+
+  const overdue = database.pollSolicitationNotifications(employee.id, new Date("2026-10-02T17:01:00Z"));
+  assert.equal(overdue.delivered.length, 1);
+  assert.equal(overdue.rows.find((item) => item.id === overdue.delivered[0]).tipo, "OVERDUE");
+  const changed = database.updateSolicitation({ id: requestId, revision: request.solicitation.revision, values: { prazo_em: "2026-10-07T17:00:00Z", responsavel_usuario_id: other.id } });
+  assert.equal(changed.ok, true);
+  assert.equal(database.listSolicitationNotifications(employee.id).rows.length, 0);
+  assert.equal(database.pollSolicitationNotifications(employee.id, new Date("2026-10-02T18:00:00Z")).delivered.length, 0);
+  assert.equal(database.pollSolicitationNotifications(other.id, new Date("2026-10-07T12:00:00Z")).delivered.length, 1);
+  const done = database.transitionSolicitation({ id: requestId, revision: changed.solicitation.revision, action: "complete", actorUserId: other.id, actorRole: "employee" });
+  assert.equal(done.ok, true);
+  assert.equal(database.listSolicitationNotifications(other.id).rows.length, 0);
+  assert.equal(database.pollSolicitationNotifications(other.id, new Date("2026-10-08T12:00:00Z")).delivered.length, 0);
+  const catchupToday = database.createSolicitation({ descricao: "Catch-up hoje", responsavel_usuario_id: employee.id, prazo_em: "2026-10-10T17:00:00Z" });
+  const today = database.pollSolicitationNotifications(employee.id, new Date("2026-10-10T12:00:00Z"));
+  assert.equal(today.rows.find((item) => item.solicitacao_id === catchupToday.solicitation.id && item.tipo === "DUE_TODAY")?.tipo, "DUE_TODAY");
+  assert.equal(today.rows.some((item) => item.solicitacao_id === catchupToday.solicitation.id && item.tipo === "DUE_TOMORROW"), false);
+  const catchupOverdue = database.createSolicitation({ descricao: "Catch-up atraso", responsavel_usuario_id: employee.id, prazo_em: "2026-10-10T17:00:00Z" });
+  const late = database.pollSolicitationNotifications(employee.id, new Date("2026-10-10T17:01:00Z"));
+  assert.equal(late.rows.find((item) => item.solicitacao_id === catchupOverdue.solicitation.id && item.tipo === "OVERDUE")?.tipo, "OVERDUE");
+  assert.equal(late.rows.some((item) => item.solicitacao_id === catchupOverdue.solicitation.id && item.tipo === "DUE_TODAY"), false);
+  const inspection = new DatabaseSync(path.join(root, "gestao-logistica.sqlite3"), { readOnly: true });
+  assert.equal(inspection.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  assert.equal(inspection.prepare("PRAGMA foreign_key_check").all().length, 0);
+  inspection.close();
+  console.log("Notificações: estágios, 100 polls, autorização, snooze, reatribuição, prazo, conclusão e integridade aprovados.");
+} finally {
+  database.close();
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}

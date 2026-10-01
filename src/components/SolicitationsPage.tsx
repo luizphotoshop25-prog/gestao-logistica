@@ -93,6 +93,7 @@ export function SolicitationsPage({ currentUser, onNotice, onOpenOrder, initialS
   const [filter, setFilter] = useState<(typeof statusFilters)[number][0]>("open");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Solicitation | null>(initialSelection || null);
+  useEffect(() => { if (initialSelection) setSelected(initialSelection); }, [initialSelection]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<SolicitationForm>(emptyForm);

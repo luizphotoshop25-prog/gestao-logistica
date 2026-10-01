@@ -187,6 +187,18 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
         if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis."), responseOrigin);
         return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
       }
+      if (request.method === "POST" && url.pathname === "/api/solicitation-notifications/poll") {
+        return sendJson(response, 200, database.pollSolicitationNotifications(currentUser.id), responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/solicitation-notifications") {
+        return sendJson(response, 200, database.listSolicitationNotifications(currentUser.id), responseOrigin);
+      }
+      const notificationAction = url.pathname.match(/^\/api\/solicitation-notifications\/([^/]+)\/(seen|open|resolve|snooze)$/);
+      if (notificationAction && request.method === "POST") {
+        const body = await readJson(request);
+        const result = database.updateSolicitationNotification(currentUser.id, { id: decodeURIComponent(notificationAction[1]), action: notificationAction[2], minutes: body.minutes });
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
       if (request.method === "GET" && url.pathname === "/api/solicitations") {
         return sendJson(response, 200, { ok: true, rows: database.listSolicitations({ userId: currentUser.id, role: currentUser.role }) }, responseOrigin);
       }

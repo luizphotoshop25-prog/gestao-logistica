@@ -95,6 +95,10 @@ app.setPath("userData", profilePath);
 // O teste visual deve permanecer invisível e nunca disputar o foco com o usuário.
 BrowserWindow.prototype.show = function suppressVisualTestWindow() {};
 const allowedChannels = new Set(["app:status", "updater:get-state", "auth:local-current", "ui-preferences:get", "ui-preferences:set", "orders:list", "orders:get", "orders:treatment-assignees", "clients:list", "dashboard:get", "siwin:status", "solicitations:list", "solicitations:get", "solicitations:assignees", "solicitations:create", "digital-shipments:list", "digital-shipments:get", "digital-shipments:for-order", "digital-shipments:resolve-sessions", "digital-shipments:create", "digital-shipments:update"]);
+allowedChannels.add("notifications:poll");
+allowedChannels.add("notifications:list");
+allowedChannels.add("notifications:update");
+allowedChannels.add("notifications:native");
 if (httpTransport) {
   allowedChannels.clear();
   allowedChannels.add("updater:get-state");
@@ -103,11 +107,13 @@ if (httpTransport) {
   allowedChannels.add("auth-session:clear");
   allowedChannels.add("ui-preferences:get");
   allowedChannels.add("ui-preferences:set");
+  allowedChannels.add("notifications:native");
 }
 const registerHandler = ipcMain.handle.bind(ipcMain);
 let digitalListCalls = 0;
 ipcMain.handle = (channel, handler) => registerHandler(channel, async (...args) => {
   if (channel === "digital-shipments:list") digitalListCalls++;
+  if (channel === "notifications:native") return { ok: true };
   if (allowedChannels.has(channel)) return handler(...args);
   fail(new Error(`IPC externo ou de escrita bloqueado: ${channel}`));
   return { ok: false, message: "Bloqueado pelo smoke visual." };
@@ -269,6 +275,68 @@ app.whenReady().then(() => {
         const clientsPath = outputPath.replace(/\.png$/i, "-clientes.png");
         await capture(window, clientsPath);
         generatedPaths.push(clientsPath);
+
+        const notificationOwner = database.listActiveUsers().find((user) => user.usuario === "coordenacao-visual");
+        if (!notificationOwner) throw new Error("Responsável sintético de notificações ausente.");
+        const notificationCases = [
+          ["OVERDUE", "2027-04-02T17:00:00Z", "2027-04-03T12:00:00Z"],
+          ["DUE_IN_ONE_HOUR", "2027-03-02T17:00:00Z", "2027-03-02T16:00:00Z"],
+          ["DUE_TODAY", "2027-02-02T17:00:00Z", "2027-02-02T12:00:00Z"],
+          ["DUE_TOMORROW", "2027-01-02T17:00:00Z", "2027-01-01T12:00:00Z"],
+        ];
+        for (const [kind, deadline, time] of notificationCases) {
+          const request = database.createSolicitation({ descricao: `Aviso visual ${kind}`, responsavel_usuario_id: notificationOwner.id, prazo_em: deadline });
+          if (!request.ok) throw new Error(`Fixture de notificação ${kind} falhou.`);
+          const delivered = database.pollSolicitationNotifications(notificationOwner.id, new Date(time));
+          if (!delivered.rows.some((item) => item.solicitacao_id === request.solicitation.id && item.tipo === kind)) throw new Error(`Estágio visual ${kind} ausente.`);
+        }
+        for (const [width, height] of [[1366, 768], [1920, 1080]]) {
+          window.setContentSize(width, height);
+          for (const scale of [100, 120, 130]) {
+            await window.webContents.executeJavaScript(`document.documentElement.style.setProperty('--font-scale', ${JSON.stringify(scale / 100)});document.querySelector('.request-bell').click()`);
+            await waitForSelector(window, ".request-notification-center .request-notice");
+            const bounds = await window.webContents.executeJavaScript(`(() => { const r=document.querySelector('.request-notification-center').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight};})()`);
+            if (bounds.left < 0 || bounds.right > bounds.viewportWidth || bounds.top < 0 || bounds.bottom > bounds.viewportHeight) throw new Error(`Central de notificações fora da tela em ${scale}% ${width}x${height}.`);
+            const centerPath = outputPath.replace(/\.png$/i, `-notificacoes-central-${scale}-${width}x${height}.png`);
+            await capture(window, centerPath); generatedPaths.push(centerPath);
+            const snoozeClicked = await window.webContents.executeJavaScript("(() => { const button=document.querySelector('.request-notification-center .request-notice-overdue .request-notice-snooze-control summary'); button?.click(); return Boolean(button); })()");
+            if (!snoozeClicked) throw new Error("Botão Lembrar depois não foi encontrado no aviso de atraso.");
+            await delay(250);
+            const snoozeState = await window.webContents.executeJavaScript("({found:Boolean(document.querySelector('.request-notification-center .request-notice-overdue .request-notice-snooze-control[open]')),center:Boolean(document.querySelector('.request-notification-center')),button:document.querySelector('.request-notice-overdue .request-notice-snooze-control summary')?.outerHTML})");
+            if (!snoozeState.found) throw new Error(`Menu de adiamento ausente: ${JSON.stringify(snoozeState)}`);
+            const snoozePath = outputPath.replace(/\.png$/i, `-notificacoes-snooze-${scale}-${width}x${height}.png`);
+            await capture(window, snoozePath); generatedPaths.push(snoozePath);
+            await window.webContents.executeJavaScript("document.querySelector('.request-bell').click()");
+          }
+        }
+        await window.webContents.executeJavaScript("document.documentElement.style.removeProperty('--font-scale')");
+        await window.webContents.executeJavaScript("document.hasFocus=()=>true;Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});true");
+        const toastCases = [
+          ["amanha", "Solicitação para amanhã", 30 * 3600000],
+          ["hoje", "Solicitação para hoje", 4 * 3600000],
+          ["uma-hora", "Prazo em 1 hora", 30 * 60000],
+          ["atraso", "Solicitação atrasada", -5 * 60000],
+        ];
+        for (const [name, label, offset] of toastCases) {
+          const request = database.createSolicitation({ descricao: `Toast visual ${name}`, responsavel_usuario_id: notificationOwner.id, prazo_em: new Date(Date.now() + offset).toISOString() });
+          if (!request.ok) throw new Error(`Fixture de toast ${name} falhou.`);
+          await window.webContents.executeJavaScript("window.dispatchEvent(new Event('focus'))");
+          const deadline = Date.now() + 5000;
+          let displayed = false;
+          while (Date.now() < deadline) {
+            displayed = await window.webContents.executeJavaScript(`document.querySelector('.request-notification-toast')?.innerText.includes(${JSON.stringify(label)}) || false`);
+            if (displayed) break;
+            await delay(80);
+          }
+          if (!displayed) throw new Error(`Toast ${name} não apareceu.`);
+          for (const [width, height, scale] of [[1366, 768, 100], [1920, 1080, 130]]) {
+            window.setContentSize(width, height);
+            await window.webContents.executeJavaScript(`document.documentElement.style.setProperty('--font-scale',${JSON.stringify(scale / 100)})`);
+            const toastPath = outputPath.replace(/\.png$/i, `-notificacoes-toast-${name}-${scale}-${width}x${height}.png`);
+            await capture(window, toastPath); generatedPaths.push(toastPath);
+          }
+        }
+        await window.webContents.executeJavaScript("document.documentElement.style.removeProperty('--font-scale')");
 
         const setValue = async (selector, value, prototype = "HTMLInputElement") => window.webContents.executeJavaScript(`(() => { const element=document.querySelector(${JSON.stringify(selector)}); const setter=Object.getOwnPropertyDescriptor(${prototype}.prototype,'value').set; setter.call(element,${JSON.stringify(value)}); element.dispatchEvent(new Event('input',{bubbles:true})); element.dispatchEvent(new Event('change',{bubbles:true})); })()`);
         const waitText = async (selector, text) => {
