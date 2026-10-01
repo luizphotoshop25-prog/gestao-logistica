@@ -5,7 +5,7 @@ $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powersh
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runName = "GestaoLogisticaPilotConnectivity"
 $opsDirectory = "E:\GestaoLogistica_Server_Pilot\logs\remote-tunnel"
-$installLog = Join-Path $opsDirectory "task-install.log"
+$installLog = Join-Path $opsDirectory "startup-install.log"
 
 if (-not (Test-Path -LiteralPath $watchScript)) { throw "Watchdog ausente: $watchScript" }
 New-Item -Path $runKey -Force | Out-Null
@@ -14,13 +14,9 @@ $command = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyl
 New-ItemProperty -LiteralPath $runKey -Name $runName -Value $command -PropertyType String -Force | Out-Null
 Add-Content -LiteralPath $installLog -Value "$(Get-Date -Format o) event=logon-startup-registered user=$([Security.Principal.WindowsIdentity]::GetCurrent().Name)" -Encoding utf8
 
-$existing = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -match [regex]::Escape($watchScript) })
-if ($existing.Count -eq 0) {
-  $started = Start-Process -FilePath $powershell -ArgumentList @(
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $watchScript
-  ) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
-  Add-Content -LiteralPath $installLog -Value "$(Get-Date -Format o) event=watchdog-started-now pid=$($started.Id)" -Encoding utf8
-}
+$started = Start-Process -FilePath $powershell -ArgumentList @(
+  '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $watchScript
+) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
+Add-Content -LiteralPath $installLog -Value "$(Get-Date -Format o) event=watchdog-launch-requested pid=$($started.Id)" -Encoding utf8
 
 Write-Output "Inicialização do watchdog registrada para o próximo logon e iniciada em segundo plano."
