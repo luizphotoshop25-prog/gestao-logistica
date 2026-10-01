@@ -8,7 +8,8 @@ const { DatabaseSync } = require("node:sqlite");
 const core = require("./logistica-reconciliation-core.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
-const WORKBOOK_PATH = process.argv[2] || "E:\\DOWNLOADS\\CONTROLE DE PEDIDOS.xlsx";
+const CLI_ARGS = process.argv.slice(2);
+const WORKBOOK_PATH = CLI_ARGS.find((argument) => !argument.startsWith("--")) || "E:\\DOWNLOADS\\CONTROLE DE PEDIDOS.xlsx";
 const DATABASE_PATH = "E:\\GestaoLogistica_Server_Pilot\\data\\gestao-logistica.sqlite3";
 const OUTPUT_DIR = path.join(ROOT, "work", "reconciliation");
 const PLAN_JSON = path.join(OUTPUT_DIR, "apply-plan.json");
@@ -284,7 +285,7 @@ function writePendingCompletionReport(records) {
 }
 
 async function main() {
-  const args = process.argv.slice(3);
+  const args = CLI_ARGS;
   const wantsApply = args.includes("--apply");
   const wantsDryRun = args.includes("--dry-run");
   const wantsPostAudit = args.includes("--post-audit");
