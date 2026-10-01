@@ -418,6 +418,18 @@ function resolveTreatmentAssignee(photoCount, assignments = {}) {
   return count < limit ? (assignments.smallUserId || null) : (assignments.largeUserId || null);
 }
 
+function isTreatmentSelectionFinalized(order) {
+  return Boolean(clean(order?.selecao_finalizada_em));
+}
+
+function resolveEligibleTreatmentAssignee(order, photoCount, assignmentConfig = treatmentAssignmentConfig(), options = {}) {
+  const preserveCompletedHistory = !options.allowHistorical
+    && (Boolean(order.tratamento_concluido_em) || order.acompanhamento_status !== "ativo");
+  if (preserveCompletedHistory) return order.tratamento_responsavel_usuario_id || null;
+  if (!isTreatmentSelectionFinalized(order)) return null;
+  return resolveTreatmentAssignee(photoCount, assignmentConfig);
+}
+
 function treatmentAssignmentConfig() {
   const activeId = (key) => {
     const configured = getConfiguration(key);
@@ -447,7 +459,9 @@ function initializeTreatmentAssignment() {
   if (mapping.smallUserId && mapping.largeUserId && !getConfiguration("tratamento_atribuicao_backfill_v1")) {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const pending = db.prepare("SELECT id,fotos_quantidade,tratamento_responsavel_usuario_id FROM pedidos WHERE tratamento_atribuicao_modo='auto'").all();
+      const pending = db.prepare(`SELECT id,fotos_quantidade,tratamento_responsavel_usuario_id
+        FROM pedidos WHERE tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NOT NULL
+          AND acompanhamento_status='ativo' AND tratamento_concluido_em IS NULL`).all();
       const update = db.prepare("UPDATE pedidos SET tratamento_responsavel_usuario_id=?,atualizado_em=? WHERE id=? AND tratamento_atribuicao_modo='auto'");
       const event = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,NULL,?)");
       for (const order of pending) {
@@ -465,14 +479,108 @@ function initializeTreatmentAssignment() {
   }
 }
 
-function setAutomaticTreatmentAssignment(orderId, photoCount, assignmentConfig = treatmentAssignmentConfig()) {
-  const current = db.prepare("SELECT tratamento_atribuicao_modo,tratamento_responsavel_usuario_id FROM pedidos WHERE id=?").get(orderId);
+function setAutomaticTreatmentAssignment(orderId, photoCount, assignmentConfig = treatmentAssignmentConfig(), options = {}) {
+  const current = db.prepare(`SELECT tratamento_atribuicao_modo,tratamento_responsavel_usuario_id,
+    selecao_finalizada_em,tratamento_concluido_em,acompanhamento_status
+    FROM pedidos WHERE id=?`).get(orderId);
   if (!current || current.tratamento_atribuicao_modo === "manual") return;
-  const assignee = resolveTreatmentAssignee(photoCount, assignmentConfig);
+  const assignee = resolveEligibleTreatmentAssignee(current, photoCount, assignmentConfig, options);
   if (assignee === current.tratamento_responsavel_usuario_id) return;
   db.prepare("UPDATE pedidos SET tratamento_responsavel_usuario_id=? WHERE id=? AND tratamento_atribuicao_modo='auto'").run(assignee, orderId);
+  const description = options.reason || (!isTreatmentSelectionFinalized(current)
+    ? "Atribuição automática removida porque a seleção do cliente ainda não foi finalizada."
+    : !current.tratamento_responsavel_usuario_id
+      ? "Responsável pelo tratamento atribuído automaticamente após finalização da seleção."
+      : "Responsável pelo tratamento recalculado automaticamente conforme a quantidade de fotos.");
   db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,NULL,?)")
-    .run(id(), orderId, "atribuicao_tratamento", "Responsável pelo tratamento atribuído automaticamente conforme a quantidade de fotos.", now());
+    .run(id(), orderId, "atribuicao_tratamento", description, now());
+}
+
+function treatmentEligibilityAudit() {
+  const config = treatmentAssignmentConfig();
+  const count = (sql, ...params) => Number(db.prepare(sql).get(...params).total || 0);
+  const operational = "acompanhamento_status='ativo' AND tratamento_concluido_em IS NULL";
+  const eligible = `selecao_finalizada_em IS NOT NULL AND ${operational} AND tratamento_atribuicao_modo='auto'`;
+  const correctTarget = `((fotos_quantidade>=0 AND fotos_quantidade<? AND tratamento_responsavel_usuario_id=?)
+    OR (fotos_quantidade>=? AND tratamento_responsavel_usuario_id=?))`;
+  return {
+    integrity: db.prepare("PRAGMA integrity_check").get().integrity_check,
+    foreignKeyViolations: db.prepare("PRAGMA foreign_key_check").all().length,
+    autoAssignedWithoutSelection: count(`SELECT COUNT(*) total FROM pedidos
+      WHERE tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NULL
+      AND tratamento_responsavel_usuario_id IS NOT NULL`),
+    operationalAutoAssignedWithoutSelection: count(`SELECT COUNT(*) total FROM pedidos
+      WHERE tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NULL
+      AND tratamento_responsavel_usuario_id IS NOT NULL AND ${operational}`),
+    manualAssignedBeforeSelection: count(`SELECT COUNT(*) total FROM pedidos
+      WHERE tratamento_atribuicao_modo='manual' AND selecao_finalizada_em IS NULL
+      AND tratamento_responsavel_usuario_id IS NOT NULL`),
+    eligibleAutomaticCorrect: count(`SELECT COUNT(*) total FROM pedidos WHERE ${eligible}
+      AND fotos_quantidade>=0 AND ${correctTarget}`, config.limit, config.smallUserId, config.limit, config.largeUserId),
+    eligibleAutomaticIncorrect: count(`SELECT COUNT(*) total FROM pedidos WHERE ${eligible}
+      AND fotos_quantidade>=0 AND tratamento_responsavel_usuario_id IS NOT NULL
+      AND NOT ${correctTarget}`, config.limit, config.smallUserId, config.limit, config.largeUserId),
+    eligibleAutomaticUnassigned: count(`SELECT COUNT(*) total FROM pedidos WHERE ${eligible}
+      AND fotos_quantidade>=0 AND tratamento_responsavel_usuario_id IS NULL`),
+    eligibleAutomaticWithoutQuantity: count(`SELECT COUNT(*) total FROM pedidos WHERE ${eligible}
+      AND fotos_quantidade IS NULL`),
+    limit: config.limit,
+    configuredUsersAvailable: Boolean(config.smallUserId && config.largeUserId),
+  };
+}
+
+function reconcileTreatmentAssignmentEligibility() {
+  const marker = "tratamento_elegibilidade_selecao_v1";
+  if (getConfiguration(marker)) return { ok: true, alreadyApplied: true, audit: treatmentEligibilityAudit(), backup: null, clearedPremature: 0, correctedEligible: 0 };
+  const config = treatmentAssignmentConfig();
+  if (config.limit !== 48) throw new Error("Reconciliação cancelada: o limite configurado de Carlos não é 48.");
+  if (!config.smallUserId || !config.largeUserId) throw new Error("Reconciliação cancelada: os dois responsáveis automáticos não estão configurados como usuários ativos.");
+  const before = treatmentEligibilityAudit();
+  if (before.integrity !== "ok" || before.foreignKeyViolations !== 0)
+    throw new Error("Reconciliação cancelada: a integridade SQLite precisa estar íntegra e sem violações de chaves estrangeiras.");
+  const backup = createSafetyBackup("elegibilidade-selecao-v1");
+  let clearedPremature = 0;
+  let correctedEligible = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const premature = db.prepare(`SELECT id FROM pedidos WHERE tratamento_atribuicao_modo='auto'
+      AND selecao_finalizada_em IS NULL AND tratamento_responsavel_usuario_id IS NOT NULL`).all();
+    const clear = db.prepare(`UPDATE pedidos SET tratamento_responsavel_usuario_id=NULL,atualizado_em=?
+      WHERE id=? AND tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NULL
+      AND tratamento_responsavel_usuario_id IS NOT NULL`);
+    const event = db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,NULL,?)");
+    for (const order of premature) {
+      const result = clear.run(now(), order.id);
+      if (!result.changes) continue;
+      clearedPremature += 1;
+      event.run(id(), order.id, "atribuicao_tratamento",
+        "Atribuição automática removida porque a seleção do cliente ainda não foi finalizada.", now());
+    }
+    const selected = db.prepare(`SELECT id,fotos_quantidade,tratamento_responsavel_usuario_id
+      FROM pedidos WHERE tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NOT NULL
+      AND tratamento_concluido_em IS NULL AND acompanhamento_status='ativo'
+      AND fotos_quantidade>=0`).all();
+    const update = db.prepare(`UPDATE pedidos SET tratamento_responsavel_usuario_id=?,atualizado_em=?
+      WHERE id=? AND tratamento_atribuicao_modo='auto' AND selecao_finalizada_em IS NOT NULL
+      AND tratamento_concluido_em IS NULL AND acompanhamento_status='ativo'`);
+    for (const order of selected) {
+      const assignee = resolveTreatmentAssignee(order.fotos_quantidade, config);
+      if (!assignee || assignee === order.tratamento_responsavel_usuario_id) continue;
+      const result = update.run(assignee, now(), order.id);
+      if (!result.changes) continue;
+      correctedEligible += 1;
+      event.run(id(), order.id, "atribuicao_tratamento",
+        "Responsável pelo tratamento corrigido na reconciliação de elegibilidade.", now());
+    }
+    setConfiguration(marker, now());
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  const audit = treatmentEligibilityAudit();
+  return { ok: audit.integrity === "ok" && audit.foreignKeyViolations === 0,
+    alreadyApplied: false, before, audit, backup, clearedPremature, correctedEligible };
 }
 
 function getLocalOperatorId() {
@@ -511,8 +619,22 @@ function createSafetyBackup(reason) {
   const safeReason = clean(reason).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "") || "operacao";
   const stamp = now().replace(/[:.]/g, "-");
   const target = path.join(dataDirectory, "backups", `antes-${safeReason}-${stamp}.sqlite3`);
-  db.exec("PRAGMA wal_checkpoint(FULL)");
+  const checkpoint = db.prepare("PRAGMA wal_checkpoint(FULL)").get();
+  if (Number(checkpoint?.busy) !== 0) throw new Error("Backup cancelado: o checkpoint WAL não foi concluído sem bloqueio.");
   fs.copyFileSync(source, target);
+  let copy;
+  try {
+    copy = new DatabaseSync(target, { readOnly: true });
+    const integrity = copy.prepare("PRAGMA integrity_check").get()?.integrity_check;
+    const foreignKeyViolations = copy.prepare("PRAGMA foreign_key_check").all().length;
+    if (integrity !== "ok" || foreignKeyViolations !== 0)
+      throw new Error("Backup cancelado: a cópia não passou nas verificações de integridade.");
+  } catch (error) {
+    try { copy?.close(); } catch {}
+    fs.rmSync(target, { force: true });
+    throw error;
+  }
+  copy.close();
   return target;
 }
 
@@ -650,7 +772,7 @@ function listOrders(options = {}) {
   });
   const filter = clean(options.filter);
   if (options.scope === "mine") return enriched.filter((row) => row.tratamento_responsavel_usuario_id === clean(options.userId)
-    && !row.tratamento_concluido_em && row.acompanhamento_status === "ativo");
+    && isTreatmentSelectionFinalized(row) && !row.tratamento_concluido_em && row.acompanhamento_status === "ativo");
   if (!filter || filter === "all") return enriched;
   if (filter === "needs_me") return enriched.filter((row) => row.operacional_bucket === "needs_me");
   if (filter === "waiting") return enriched.filter((row) => row.operacional_bucket === "waiting");
@@ -1106,15 +1228,14 @@ function updateOrder(input) {
     return { ok: false, message: "Informe o código de rastreio antes de registrar a postagem." };
   const selection = normalized.find(([field]) => field === "selecao_finalizada_em");
   if (selection) {
+    if (!selection[1]) {
+      const downstreamFields = ["tratamento_concluido_em", "impressao_enviada_em", "impressao_recebida_em",
+        "etiqueta_criada_em", "postado_em", "entregue_em"];
+      if (downstreamFields.some((field) => clean(merged[field])))
+        return { ok: false, message: "Não é possível remover a seleção enquanto houver etapas posteriores registradas." };
+    }
     normalized.push(["prazo_tratamento_em", addCalendarDays(selection[1], 20)]);
     normalized.push(["prazo_maximo_em", addCalendarDays(selection[1], 60)]);
-  }
-  let autoAssignmentChanged = false;
-  if (normalized.some(([field]) => field === "fotos_quantidade") && order.tratamento_atribuicao_modo !== "manual") {
-    const quantity = Object.fromEntries(normalized).fotos_quantidade;
-    const assignee = resolveTreatmentAssignee(quantity, treatmentAssignmentConfig());
-    autoAssignmentChanged = assignee !== order.tratamento_responsavel_usuario_id;
-    if (autoAssignmentChanged) normalized.push(["tratamento_responsavel_usuario_id", assignee]);
   }
   normalized.push(["atualizado_em", now()]);
   db.exec("BEGIN IMMEDIATE");
@@ -1128,9 +1249,11 @@ function updateOrder(input) {
     db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)").run(
       id(), orderId, "edicao", `Informações atualizadas: ${normalized.filter(([field]) => !["prazo_tratamento_em", "prazo_maximo_em", "atualizado_em", "tratamento_responsavel_usuario_id"].includes(field)).map(([field]) => field).join(", ")}.`, clean(input?.usuarioId) || null, now(),
     );
-    if (autoAssignmentChanged) db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,usuario_id,criado_em) VALUES (?,?,?,?,?,?)").run(
-      id(), orderId, "atribuicao_tratamento", "Responsável pelo tratamento recalculado automaticamente conforme a quantidade de fotos.", clean(input?.usuarioId) || null, now(),
-    );
+    if (order.tratamento_atribuicao_modo !== "manual"
+      && normalized.some(([field]) => field === "fotos_quantidade" || field === "selecao_finalizada_em")) {
+      const current = db.prepare("SELECT fotos_quantidade FROM pedidos WHERE id=?").get(orderId);
+      setAutomaticTreatmentAssignment(orderId, current?.fotos_quantidade, treatmentAssignmentConfig());
+    }
     db.exec("COMMIT");
     return getOrder(orderId);
   } catch (error) {
@@ -1177,7 +1300,7 @@ function restoreAutomaticTreatmentAssignee(input) {
   const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(orderId);
   if (!order) return { ok: false, message: "Pedido não encontrado." };
   if (order.revisao !== revision) return { ok: false, error: "REVISION_CONFLICT", revisaoAtual: order.revisao, message: "Este pedido foi alterado por outra pessoa. Reabra a ficha." };
-  const assignee = resolveTreatmentAssignee(order.fotos_quantidade, treatmentAssignmentConfig());
+  const assignee = resolveEligibleTreatmentAssignee(order, order.fotos_quantidade, treatmentAssignmentConfig(), { allowHistorical: true });
   if (order.tratamento_atribuicao_modo === "auto" && order.tratamento_responsavel_usuario_id === assignee)
     return { ...getOrder(orderId), unchanged: true };
   db.exec("BEGIN IMMEDIATE");
@@ -1674,6 +1797,7 @@ function importThunderbirdSelections(records) {
         db.prepare(`UPDATE pedidos SET selecao_finalizada_em=?,prazo_tratamento_em=?,
           prazo_maximo_em=?,atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(finalDate,
           addCalendarDays(finalDate, 20), addCalendarDays(finalDate, 60), timestamp, order.id);
+        setAutomaticTreatmentAssignment(order.id, order.fotos_quantidade, treatmentAssignmentConfig());
         datesSet += 1;
         insertEvent.run(id(), order.id, "selecao_email",
           `Seleção recebida pelo Thunderbird e registrada em ${finalDate.split("-").reverse().join("/")}.`, timestamp);
@@ -1694,6 +1818,7 @@ function importThunderbirdSelections(records) {
         db.prepare(`UPDATE pedidos SET selecao_finalizada_em=?,prazo_tratamento_em=?,
           prazo_maximo_em=?,atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(email.data_finalizacao,
           addCalendarDays(email.data_finalizacao, 20), addCalendarDays(email.data_finalizacao, 60), timestamp, order.id);
+        setAutomaticTreatmentAssignment(order.id, order.fotos_quantidade, treatmentAssignmentConfig());
         datesSet += 1;
         insertEvent.run(id(), order.id, "selecao_email",
           `Seleção vinculada pelo Thunderbird e registrada em ${email.data_finalizacao.split("-").reverse().join("/")}.`, timestamp);
@@ -1783,7 +1908,7 @@ function importSafeRows(preview) {
       else skipped += 1;
       if (Number(result.changes) > 0) {
         const order = db.prepare("SELECT id FROM pedidos WHERE sessao=?").get(row.sessao);
-        if (order) setAutomaticTreatmentAssignment(order.id, row.fotosQuantidade, assignmentConfig);
+        if (order) setAutomaticTreatmentAssignment(order.id, row.fotosQuantidade, assignmentConfig, { allowHistorical: true });
       }
     }
     db.exec("COMMIT");
@@ -1808,8 +1933,7 @@ function updateMilestone(input) {
   ]);
   const field = clean(input.field);
   if (!allowed.has(field)) return { ok: false, message: "Etapa inválida." };
-  const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(clean(input.id));
-  if (!order) return { ok: false, message: "Pedido não encontrado." };
+  const orderId = clean(input.id);
   const value = clean(input.value) || businessDate();
   if (!validIsoDate(value)) return { ok: false, message: "A data informada é inválida." };
   const expectedField = {
@@ -1821,27 +1945,35 @@ function updateMilestone(input) {
     em_impressao: "impressao_recebida_em",
     impressoes_recebidas: "etiqueta_criada_em",
     postado: "entregue_em",
-  }[deriveStage(order)];
-  if (expectedField !== field)
-    return { ok: false, message: "Esta ação não corresponde à etapa atual do pedido. Abra a ficha para revisar." };
-  db.prepare(`UPDATE pedidos SET ${field}=?, atualizado_em=?, revisao=revisao+1 WHERE id=?`).run(value, now(), order.id);
-  if (field === "impressao_enviada_em" && !clean(order.fornecedor_impressao))
-    db.prepare("UPDATE pedidos SET fornecedor_impressao='Digital Fotos' WHERE id=?").run(order.id);
-  if (field === "selecao_finalizada_em") {
-    db.prepare("UPDATE pedidos SET prazo_tratamento_em=?, prazo_maximo_em=? WHERE id=?").run(
-      addCalendarDays(value, 20),
-      addCalendarDays(value, 60),
-      order.id,
+  };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const order = db.prepare("SELECT * FROM pedidos WHERE id=?").get(orderId);
+    if (!order) { db.exec("ROLLBACK"); return { ok: false, message: "Pedido não encontrado." }; }
+    if (expectedField[deriveStage(order)] !== field) {
+      db.exec("ROLLBACK");
+      return { ok: false, message: "Esta ação não corresponde à etapa atual do pedido. Abra a ficha para revisar." };
+    }
+    if (field === "selecao_finalizada_em") {
+      db.prepare(`UPDATE pedidos SET ${field}=?,prazo_tratamento_em=?,prazo_maximo_em=?,
+        atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(value,
+        addCalendarDays(value, 20), addCalendarDays(value, 60), now(), order.id);
+      setAutomaticTreatmentAssignment(order.id, order.fotos_quantidade, treatmentAssignmentConfig());
+    } else if (field === "impressao_enviada_em" && !clean(order.fornecedor_impressao)) {
+      db.prepare(`UPDATE pedidos SET ${field}=?,fornecedor_impressao='Digital Fotos',
+        atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(value, now(), order.id);
+    } else {
+      db.prepare(`UPDATE pedidos SET ${field}=?,atualizado_em=?,revisao=revisao+1 WHERE id=?`).run(value, now(), order.id);
+    }
+    db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)").run(
+      id(), order.id, field, `Etapa registrada em ${value}.`, now(),
     );
+    db.exec("COMMIT");
+    return { ok: true };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
-  db.prepare("INSERT INTO eventos (id,pedido_id,tipo,descricao,criado_em) VALUES (?,?,?,?,?)").run(
-    id(),
-    order.id,
-    field,
-    `Etapa registrada em ${value}.`,
-    now(),
-  );
-  return { ok: true };
 }
 
 
@@ -2078,6 +2210,8 @@ module.exports = {
   getLocalOperator,
   assignmentBackfillCounts,
   resolveTreatmentAssignee,
+  treatmentEligibilityAudit,
+  reconcileTreatmentAssignmentEligibility,
   createUser,
   listActiveUsers,
   setUserRole,

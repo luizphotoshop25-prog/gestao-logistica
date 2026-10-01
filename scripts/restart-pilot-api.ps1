@@ -73,9 +73,14 @@ $oldPort = $env:GESTAO_API_PORT
 try {
   $env:GESTAO_SERVER_DATA = $pilotData
   Push-Location $projectRoot
-  try { & (Get-Command npm).Source run pilot:migrate-treatment-assignment; if ($LASTEXITCODE -ne 0) { throw "Migracao falhou com codigo $LASTEXITCODE." } }
+  try {
+    & (Get-Command npm).Source run pilot:migrate-treatment-assignment
+    if ($LASTEXITCODE -ne 0) { throw "Migracao falhou com codigo $LASTEXITCODE." }
+    & (Get-Command npm).Source run pilot:reconcile-treatment-selection
+    if ($LASTEXITCODE -ne 0) { throw "Reconciliação da elegibilidade falhou com codigo $LASTEXITCODE." }
+  }
   finally { Pop-Location }
-  Write-Output "[3/6] Backup/migracao concluidos."
+  Write-Output "[3/6] Backup, migração e reconciliação de elegibilidade concluídos."
 
   $env:GESTAO_API_HOST = "127.0.0.1"
   $env:GESTAO_API_PORT = [string]$port
