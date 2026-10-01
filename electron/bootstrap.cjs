@@ -6,6 +6,25 @@ if (process.platform === "win32") {
   app.setAppUserModelId("br.com.manoelguimaraes.gestaologistica");
   app.setToastActivatorCLSID("{9C070A34-2C33-41B1-83F3-41262D1E71B2}");
 }
+const smokeDirectory = resolveSmokeDirectory(process.env.GESTAO_PACKAGED_RUNTIME_SMOKE_DIR);
+const interactiveSmoke = Boolean(smokeDirectory) && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
+if (smokeDirectory) {
+  fs.mkdirSync(smokeDirectory, { recursive: true });
+  app.setPath("appData", path.join(smokeDirectory, "appdata"));
+  app.setPath("userData", path.join(smokeDirectory, "profile"));
+}
+const ownsInstanceLock = app.requestSingleInstanceLock();
+if (ownsInstanceLock) {
+  app.on("second-instance", () => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+} else {
+  app.quit();
+}
 const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 const { ensureWindowsNotificationRegistration } = require("./windows-notification-registration.cjs");
@@ -14,8 +33,6 @@ const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 let updaterController;
 let recoveryWindow;
 let startupFailureReported = false;
-const smokeDirectory = resolveSmokeDirectory(process.env.GESTAO_PACKAGED_RUNTIME_SMOKE_DIR);
-const interactiveSmoke = Boolean(smokeDirectory) && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
 
 function resolveSmokeDirectory(candidate) {
   if (!candidate) return "";
@@ -56,6 +73,7 @@ function recordFailure(error) {
 }
 
 function registerWindowsNotifications() {
+  if (smokeDirectory) return { ok: true, status: "packaged-smoke-isolated" };
   if (process.platform !== "win32" || !app.isPackaged) return { ok: true, status: "not-installed-runtime" };
   let supportedBefore = false;
   try { supportedBefore = Notification.isSupported(); } catch { /* Diagnostics do not block startup. */ }
@@ -138,12 +156,8 @@ process.on("unhandledRejection", (error) => showRecovery(error));
 globalThis[Symbol.for("gestao-logistica.show-recovery")] = showRecovery;
 
 app.whenReady().then(() => {
+  if (!ownsInstanceLock) return;
   registerWindowsNotifications();
-
-  if (smokeDirectory) {
-    fs.mkdirSync(smokeDirectory, { recursive: true });
-    app.setPath("userData", path.join(smokeDirectory, "profile"));
-  }
 
   updaterController = createUpdaterController({
     app,

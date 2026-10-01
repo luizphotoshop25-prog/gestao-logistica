@@ -14,6 +14,7 @@ const { autoUpdater } = require("electron-updater");
 const { createUpdaterController } = require("./updater.cjs");
 const { readUiPreferences, writeUiPreferences } = require("./ui-preferences.cjs");
 const { showNativeSolicitationNotification } = require("./solicitation-native-notifications.cjs");
+const { showWindowsNotificationTest } = require("./windows-notification-test.cjs");
 const UPDATER_KEY = Symbol.for("gestao-logistica.updater-controller");
 
 const buildMarker = loadClientBuild({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
@@ -126,6 +127,18 @@ function registerNotificationIpc() {
     };
     return showNativeSolicitationNotification(Notification, mainWindow, input, showFallback);
   });
+}
+
+function runWindowsNotificationTest() {
+  if (process.platform !== "win32" || !app.isPackaged || !process.argv.includes("--gestao-native-notification-test")) return;
+  setTimeout(() => {
+    const result = showWindowsNotificationTest({
+      Notification,
+      mainWindow,
+      log: (event) => writeUpdaterLog(`native-notification-test ${event}`),
+    });
+    if (!result.ok) writeUpdaterLog(`native-notification-test ${result.status}`);
+  }, 1500);
 }
 
 function writeUpdaterLog(message) {
@@ -333,7 +346,9 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
   });
   createWindow();
+  runWindowsNotificationTest();
   const interactiveSmoke = app.isPackaged && process.env.GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE === "1";
+  if (interactiveSmoke) setTimeout(() => app.quit(), 8000);
   if (!interactiveSmoke) setTimeout(() => { void updaterController.checkSilently(); }, 10000);
   if (httpMode || interactiveSmoke) return;
   setTimeout(async () => {

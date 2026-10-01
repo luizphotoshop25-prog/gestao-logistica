@@ -102,6 +102,10 @@ export function App({ currentUser, onLogout, fontScale, onFontScalePreview, onFo
   const [centralQueue, setCentralQueue] = useState("needs_me");
   const [centralTask, setCentralTask] = useState<Solicitation | null>(null);
   const openNotifiedSolicitation = useCallback(async (id: string) => {
+    if (id === "__native_notification_test__") {
+      setWorkspacePage("solicitations");
+      return;
+    }
     try {
       const result = await dataService.getSolicitation(id);
       if (!result.ok || !result.solicitation) return;

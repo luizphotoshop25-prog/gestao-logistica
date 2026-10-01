@@ -79,14 +79,19 @@ function waitForMarker(directory, names, child, milliseconds = timeoutMs) {
   });
 }
 
-function launchPackaged(executable, smokeDirectory) {
+function launchPackaged(executable, smokeDirectory, interactive = false) {
   const appDataDirectory = path.join(smokeDirectory, "appdata");
   fs.mkdirSync(appDataDirectory, { recursive: true });
   const child = spawn(executable, [], {
     cwd: path.dirname(executable),
     windowsHide: true,
     stdio: "ignore",
-    env: { ...process.env, APPDATA: appDataDirectory, GESTAO_PACKAGED_RUNTIME_SMOKE_DIR: smokeDirectory },
+    env: {
+      ...process.env,
+      APPDATA: appDataDirectory,
+      GESTAO_PACKAGED_RUNTIME_SMOKE_DIR: smokeDirectory,
+      ...(interactive ? { GESTAO_PACKAGED_RUNTIME_INTERACTIVE_SMOKE: "1" } : {}),
+    },
   });
   child.on("error", () => {});
   return child;
@@ -132,6 +137,19 @@ async function main() {
     await waitForExit(successProcess);
     console.log("Runtime empacotado real inicializou o main process e abriu a janela.");
 
+    const singleInstanceDirectory = path.join(tempRoot, "single-instance");
+    fs.mkdirSync(singleInstanceDirectory, { recursive: true });
+    const primaryInstance = launchPackaged(executable, singleInstanceDirectory, true);
+    await waitForMarker(singleInstanceDirectory, ["application-window-ready"], primaryInstance);
+    const duplicateInstance = launchPackaged(executable, singleInstanceDirectory, true);
+    await waitForExit(duplicateInstance);
+    assert.equal(primaryInstance.exitCode, null, "A segunda execução encerrou a instância principal em vez de apenas sair.");
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(primaryInstance.exitCode, null, "A instância principal não permaneceu ativa após a segunda execução.");
+    await waitForExit(primaryInstance, 12000);
+    assert.equal(primaryInstance.exitCode, 0, "A instância principal não encerrou normalmente após o smoke.");
+    console.log("O runtime empacotado mantém uma única instância e encerra a execução duplicada.");
+
     const extractedDirectory = path.join(tempRoot, "fault-injection");
     await extractAll(archive, extractedDirectory);
     const missingModule = path.join(extractedDirectory, explicitRuntimeModule.replace(/\//g, path.sep));
@@ -156,7 +174,11 @@ async function main() {
     const resolvedOsTemp = path.resolve(os.tmpdir());
     const relative = path.relative(resolvedOsTemp, resolvedTemp);
     assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative), "Recusa limpar um diretório fora do diretório temporário próprio.");
-    fs.rmSync(resolvedTemp, { recursive: true, force: true });
+    try {
+      fs.rmSync(resolvedTemp, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+    } catch (error) {
+      console.warn(`Temp do smoke será removido em nova execução: ${error.code || error.message}`);
+    }
   }
 }
 
