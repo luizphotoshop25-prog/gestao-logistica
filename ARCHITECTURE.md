@@ -20,6 +20,14 @@ O cliente remoto lê `gestao-client.json` por `GESTAO_CLIENT_CONFIG`, portanto I
 
 Para o piloto LAN, `server/lan-server.cjs` habilita explicitamente host de rede e porta estável. `GESTAO_SERVER_DATA` aponta diretamente para o diretório que contém `gestao-logistica.sqlite3`, `backups/` e `comprovantes/`. O health check informa apenas disponibilidade da API e do banco.
 
+## API hospedada no Cloudflare
+
+O cliente remoto pode usar a API publicada em Cloudflare Workers. `cloudflare/worker.mjs` encaminha as requisições para um Durable Object SQLite persistente; `server/cloudflare/sqlite-sync-adapter.cjs` adapta o armazenamento síncrono usado pelo domínio existente para o SQL do Durable Object. As mutações operacionais usam transação síncrona do Durable Object. O endpoint público de health não exige login; as rotas operacionais continuam usando a autenticação HTTP existente e o rate limit persiste no armazenamento remoto.
+
+O endereço do Worker é distribuído pelo `remote-config.json`; o cliente aceita origens HTTPS `workers.dev` além de Quick Tunnels. A migração inicial usa rotas internas temporárias protegidas por `MIGRATION_TOKEN`, com verificação de contagens e chaves estrangeiras; após a carga, o segredo é removido e a rota deixa de aceitar importações.
+
+O Digital Sync continua dependente do processo/armazenamento local Windows e está desativado no Worker até que sua execução e suas credenciais sejam provisionadas separadamente. Não copiar credenciais locais ou DPAPI para Cloudflare sem autorização explícita.
+
 ## Camadas
 
 - `src/main.tsx` inicia React; `src/App.tsx` compõe a interface e estado; `src/global.d.ts` declara contrato/modelos; `src/components/` e `src/styles.css` mantêm elementos e aparência.

@@ -1,0 +1,17 @@
+name = "gestao-logistica-api"
+main = "./worker.mjs"
+compatibility_date = "2026-10-05"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "API_DATABASE"
+class_name = "ApiDatabase"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ApiDatabase"]

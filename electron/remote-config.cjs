@@ -19,9 +19,10 @@ function validateRemoteConfig(value) {
   let target;
   try { target = new URL(value.apiBaseUrl); } catch { throw new Error("A URL da API na configuração remota é inválida."); }
   const hostname = target.hostname.toLowerCase();
+  const approvedCloudOrigin = hostname.endsWith(".trycloudflare.com") || hostname.endsWith(".workers.dev");
   if (target.protocol !== "https:" || target.origin !== value.apiBaseUrl || target.username || target.password
-    || target.pathname !== "/" || target.search || target.hash || !hostname.endsWith(".trycloudflare.com")) {
-    throw new Error("A API remota deve usar uma origem HTTPS aprovada do Quick Tunnel.");
+    || target.pathname !== "/" || target.search || target.hash || !approvedCloudOrigin) {
+    throw new Error("A API remota deve usar uma origem HTTPS aprovada do Quick Tunnel ou Cloudflare Workers.");
   }
   return { apiBaseUrl: target.origin, environment: "pilot", enabled: true };
 }

@@ -10,6 +10,17 @@ const solicitationNotifications = require("./solicitation-notifications.cjs");
 let db;
 let dataDirectory;
 
+// Allows alternate runtimes to supply a synchronous SQLite-compatible connection.
+// The Electron/Node runtime continues to own initialization and file backups.
+function withDatabaseConnection(connection, operation) {
+  if (!connection || typeof connection.prepare !== "function" || typeof operation !== "function")
+    throw new Error("Conexão de banco inválida.");
+  const previous = db;
+  db = connection;
+  try { return operation(); }
+  finally { db = previous; }
+}
+
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 const clean = (value) => String(value ?? "").trim();
@@ -2191,6 +2202,7 @@ function updateSolicitationNotification(userId, input, at = new Date()) {
 }
 
 module.exports = {
+  withDatabaseConnection,
   initialize,
   initializeDataDirectory,
   close,

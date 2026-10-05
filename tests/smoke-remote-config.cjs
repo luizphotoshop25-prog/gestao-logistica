@@ -30,6 +30,8 @@ async function main() {
     assert.throws(() => loadClientBuild({ isPackaged: true, resourcesPath: root }), /não é aprovado/);
     const remote = { apiBaseUrl: "https://pilot-123.trycloudflare.com", environment: "pilot", enabled: true };
     assert.deepEqual(validateRemoteConfig(remote), remote);
+    const workersRemote = { ...remote, apiBaseUrl: "https://gestao-logistica-api.example-account.workers.dev" };
+    assert.deepEqual(validateRemoteConfig(workersRemote), workersRemote);
     for (const apiBaseUrl of ["http://pilot.trycloudflare.com", "https://pilot.example.com", "https://pilot.trycloudflare.com/api", "https://u:p@pilot.trycloudflare.com", "https://pilot.trycloudflare.com?x=1"]) {
       assert.throws(() => validateRemoteConfig({ ...remote, apiBaseUrl }));
     }
