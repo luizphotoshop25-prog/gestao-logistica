@@ -82,6 +82,13 @@ SIWIN lê `C:\siwin\Siwin-Master\arqini.ini`, consulta SQL Server somente em lei
 1. Validar integrações em ambiente autorizado, sem apontar testes a dados de produção.
 2. Antes de mudar dados/esquema, avaliar impacto em prazos, eventos, backup, transações e compatibilidade.
 
+## API hospedada no Cloudflare — 05/10/2026
+
+- A API foi implantada em `https://gestao-logistica-api.luizphotoshop25.workers.dev` usando Cloudflare Worker + Durable Object SQLite persistente, sem depender do PC servidor para health, login e operações do Gestão Logística.
+- O snapshot do banco piloto foi importado uma única vez em modo sequencial: 17 tabelas, 84.038 registros, contagens validadas e zero violações de chaves estrangeiras. O banco de origem foi lido sem escrita. O token temporário de importação foi removido após a validação.
+- O cliente remoto v0.1.19 aceita o host `workers.dev`; `remote-config.json` aponta para esse endpoint. A versão anterior 0.1.18 só aceita Quick Tunnel e precisa ser atualizada para usar a nova API.
+- O Digital Sync da Digital Fotos ainda não roda no Worker: ele depende de credencial e estado locais do Windows. Permanece desativado até uma etapa separada de provisionamento autorizado; o código não deve copiar essas credenciais para Cloudflare por conta própria.
+
 ## Baseline de recuperação
 
 - Baseline anterior: `738352b666cdfdfec9370870cbe1fac1acc7278d`, branch `master`.

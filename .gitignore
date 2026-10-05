@@ -12,6 +12,7 @@ work/
 *.sqlite3-*
 .env
 .env.*
+.dev.vars
 !.env.example
 *.env
 *.db
@@ -47,3 +48,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+cloudflare/.wrangler/
+release-cloudflare/

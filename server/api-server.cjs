@@ -82,13 +82,239 @@ async function readJson(request) {
   catch { throw Object.assign(new Error("JSON inválido."), { code: "INVALID_JSON" }); }
 }
 
-async function requireSession(request) {
+function requireSession(request) {
   const token = readBearer(request);
   if (!token) return null;
   const user = database.getSessionUser(hashToken(token));
   return user && user.ativo ? user : null;
 }
 
+function createApiRequestHandler(options = {}) {
+  const { allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions(),
+    syncState = null, syncScheduler = null, loginRateStore = null } = options;
+  const dispatchParsed = (request, response) => {
+    const requestOrigin = request.headers.origin || "";
+    const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
+    const responseOrigin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : "";
+    const errorBody = (error, message) => ({ error, message });
+    if (requestOrigin && !responseOrigin) return sendJson(response, 403, errorBody("ORIGIN_NOT_ALLOWED", "Origem não permitida."));
+    if (request.method === "OPTIONS") {
+      response.statusCode = 204;
+      if (responseOrigin) response.setHeader("Access-Control-Allow-Origin", responseOrigin);
+      response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      response.setHeader("Access-Control-Allow-Private-Network", "true");
+      return response.end();
+    }
+    const url = new URL(request.url, "http://127.0.0.1");
+    try {
+      if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true, database: "available" }, responseOrigin);
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        const rateKey = loginRateKey(request);
+        const rate = loginRateStore ? loginRateStore.status(rateKey) : loginRateStatus(rateKey);
+        if (!rate.allowed) {
+          response.setHeader("Retry-After", String(rate.retryAfter));
+          return sendJson(response, 429, errorBody("LOGIN_RATE_LIMITED", "Muitas tentativas de login. Aguarde antes de tentar novamente."), responseOrigin);
+        }
+        const body = request.jsonBody || {};
+        const user = database.getUserForLogin(body.usuario);
+        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) {
+          const retryAfter = loginRateStore ? loginRateStore.recordFailure(rateKey) : recordLoginFailure(rateKey);
+          if (retryAfter) response.setHeader("Retry-After", String(retryAfter));
+          return sendJson(response, retryAfter ? 429 : 401, { ...errorBody(retryAfter ? "LOGIN_RATE_LIMITED" : "INVALID_CREDENTIALS", retryAfter ? "Muitas tentativas de login. Aguarde antes de tentar novamente." : "Usuário ou senha inválidos.") }, responseOrigin);
+        }
+        if (loginRateStore) loginRateStore.clear(rateKey);
+        else loginFailures.delete(rateKey);
+        const token = crypto.randomBytes(32).toString("base64url");
+        const expiraEm = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
+        database.createSession({ usuarioId: user.id, tokenHash: hashToken(token), expiraEm });
+        return sendJson(response, 200, { ok: true, user: publicUser(user), session: token, expiraEm }, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+        const token = readBearer(request);
+        if (token) database.revokeSession(hashToken(token));
+        return sendJson(response, 200, { ok: true }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/auth/current") {
+        const user = requireSession(request);
+        return user ? sendJson(response, 200, { ok: true, user: publicUser(user) }, responseOrigin) : sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
+      }
+      const currentUser = requireSession(request);
+      if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
+      if (request.method === "GET" && url.pathname === "/api/digital-sync/status") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403,
+          errorBody("FORBIDDEN", "Somente a coordenação pode consultar a sincronização."), responseOrigin);
+        let state = null, stateError = null;
+        if (syncState) {
+          try { state = syncState.status(); }
+          catch (error) { stateError = safeError(error); }
+        }
+        return sendJson(response, 200, { ok: true, enabled: digitalSyncConfig.enabled === true,
+          writeEnabled: digitalSyncConfig.writeEnabled === true,
+          maxImportsPerCycle: digitalSyncConfig.maxImportsPerCycle ?? 1,
+          intervalMinutes: digitalSyncConfig.intervalMinutes,
+          nextRunAt: syncScheduler?.nextDueAt() ?? null, state, stateError }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/solicitations/assignees") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis."), responseOrigin);
+        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/solicitation-notifications/poll") {
+        return sendJson(response, 200, database.pollSolicitationNotifications(currentUser.id), responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/solicitation-notifications") {
+        return sendJson(response, 200, database.listSolicitationNotifications(currentUser.id), responseOrigin);
+      }
+      const notificationAction = url.pathname.match(/^\/api\/solicitation-notifications\/([^/]+)\/(seen|open|resolve|snooze|presented)$/);
+      if (notificationAction && request.method === "POST") {
+        const body = request.jsonBody || {};
+        const result = database.updateSolicitationNotification(currentUser.id, { id: decodeURIComponent(notificationAction[1]), action: notificationAction[2], minutes: body.minutes });
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/solicitations") {
+        return sendJson(response, 200, { ok: true, rows: database.listSolicitations({ userId: currentUser.id, role: currentUser.role }) }, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/solicitations") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode criar solicitações."), responseOrigin);
+        const body = request.jsonBody || {};
+        const result = database.createSolicitation({
+          descricao: body.descricao,
+          observacao: body.observacao,
+          sessao_codigo: body.sessao_codigo,
+          responsavel_usuario_id: body.responsavel_usuario_id,
+          prazo_em: body.prazo_em,
+          criado_por_usuario_id: currentUser.id,
+          criado_por_nome: currentUser.nome,
+        });
+        return sendJson(response, result.ok ? 201 : 400, result, responseOrigin);
+      }
+      const solicitationAction = url.pathname.match(/^\/api\/solicitations\/([^/]+)\/(start|complete|cancel|reopen)$/);
+      if (solicitationAction && request.method === "POST") {
+        const [, solicitationId, action] = solicitationAction;
+        if (["cancel", "reopen"].includes(action) && currentUser.role !== "coordinator")
+          return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode cancelar ou reabrir solicitações."), responseOrigin);
+        const body = request.jsonBody || {};
+        const result = database.transitionSolicitation({ id: decodeURIComponent(solicitationId), revision: body.revision, action, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const solicitation = url.pathname.match(/^\/api\/solicitations\/([^/]+)$/);
+      if (solicitation && request.method === "GET") {
+        const item = database.getSolicitation(decodeURIComponent(solicitation[1]), { userId: currentUser.id, role: currentUser.role });
+        return item ? sendJson(response, 200, { ok: true, solicitation: item }, responseOrigin)
+          : sendJson(response, 404, errorBody("NOT_FOUND", "Solicitação não encontrada."), responseOrigin);
+      }
+      if (solicitation && request.method === "PATCH") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode editar solicitações."), responseOrigin);
+        const body = request.jsonBody || {};
+        const result = database.updateSolicitation({ id: decodeURIComponent(solicitation[1]), revision: body.revision, values: body.values });
+        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/digital-shipments") {
+        const result = database.listDigitalShipments({
+          search: url.searchParams.get("search") || "", page: url.searchParams.get("page"),
+          pageSize: url.searchParams.get("pageSize"), sort: url.searchParams.get("sort") || "date-desc",
+          from: url.searchParams.get("from") || "", to: url.searchParams.get("to") || "",
+        });
+        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/digital-shipments/resolve-sessions") {
+        const body = request.jsonBody || {};
+        const result = database.resolveDigitalShipmentSessions(body);
+        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/api/digital-shipments/orders/")) {
+        const orderId = decodeURIComponent(url.pathname.slice("/api/digital-shipments/orders/".length));
+        const result = database.getDigitalShipmentsForOrder(orderId);
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/digital-shipments") {
+        const body = request.jsonBody || {};
+        const result = database.createDigitalShipment({ ...body, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 201 : result.error === "FORBIDDEN" ? 403
+          : ["DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
+            : result.error === "ORDER_NOT_FOUND" ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const digitalShipmentMatch = url.pathname.match(/^\/api\/digital-shipments\/([^/]+)$/);
+      if (digitalShipmentMatch && request.method === "GET") {
+        const shipment = database.getDigitalShipment(decodeURIComponent(digitalShipmentMatch[1]));
+        return sendJson(response, shipment ? 200 : 404, shipment ? { ok: true, shipment } : errorBody("NOT_FOUND", "Pedido Digital não encontrado."), responseOrigin);
+      }
+      if (digitalShipmentMatch && request.method === "PATCH") {
+        const body = request.jsonBody || {};
+        const result = database.updateDigitalShipment({ ...body, id: decodeURIComponent(digitalShipmentMatch[1]), actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403
+          : ["REVISION_CONFLICT", "DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
+            : result.error === "NOT_FOUND" ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/orders") {
+        const scope = url.searchParams.get("scope") === "mine" ? "mine" : "all";
+        const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all", scope, userId: scope === "mine" ? currentUser.id : undefined });
+        return sendJson(response, 200, { ok: true, rows }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/orders/treatment-assignees") {
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis pelo tratamento."), responseOrigin);
+        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
+      }
+      if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, responseOrigin);
+      const clientProfileMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/client-profile$/);
+      if (clientProfileMatch && request.method === "GET") {
+        const result = database.getOrderClientProfile(decodeURIComponent(clientProfileMatch[1]));
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      const assignmentMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee$/);
+      if (assignmentMatch && request.method === "PATCH") {
+        const body = request.jsonBody || {};
+        const result = database.updateTreatmentAssignee({ id: decodeURIComponent(assignmentMatch[1]), revisao: body.revisao, responsavelUsuarioId: body.responsavelUsuarioId, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const automaticMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee\/automatic$/);
+      if (automaticMatch && request.method === "POST") {
+        const body = request.jsonBody || {};
+        const result = database.restoreAutomaticTreatmentAssignee({ id: decodeURIComponent(automaticMatch[1]), revisao: body.revisao, actorUserId: currentUser.id, actorRole: currentUser.role });
+        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
+        return sendJson(response, status, result, responseOrigin);
+      }
+      const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
+      if (match && request.method === "GET") {
+        const result = database.getOrder(decodeURIComponent(match[1]));
+        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
+      }
+      if (match && request.method === "PATCH") {
+        const body = request.jsonBody || {};
+        if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) return sendJson(response, 400, errorBody("INVALID_INPUT", "values é obrigatório."), responseOrigin);
+        const result = database.updateOrder({ id: decodeURIComponent(match[1]), revisao: body.revisao, values: body.values, usuarioId: currentUser.id });
+        return sendJson(response, result.ok ? 200 : result.error === "REVISION_CONFLICT" ? 409 : 400, result, responseOrigin);
+      }
+      return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
+    } catch (error) {
+      const statusCode = error.code === "INVALID_JSON" ? 400 : error.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
+      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", statusCode === 500 ? "Erro interno." : error.message), responseOrigin);
+    }
+  };
+  const handler = async (request, response) => {
+    const requestOrigin = request.headers.origin || "";
+    const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
+    const responseOrigin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : "";
+    if (requestOrigin && !responseOrigin)
+      return sendJson(response, 403, { error: "ORIGIN_NOT_ALLOWED", message: "Origem não permitida." });
+    if (request.method === "OPTIONS") return dispatchParsed(request, response);
+    try {
+      request.jsonBody = ["POST", "PATCH"].includes(request.method) ? await readJson(request) : {};
+    } catch (error) {
+      const statusCode = error.code === "INVALID_JSON" ? 400 : error.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
+      return sendJson(response, statusCode,
+        { error: error.code || "INTERNAL_ERROR", message: statusCode === 500 ? "Erro interno." : error.message }, responseOrigin);
+    }
+    return dispatchParsed(request, response);
+  };
+  handler.dispatchParsed = dispatchParsed;
+  return handler;
+}
 function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0,
   allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions() } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
@@ -121,209 +347,8 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       run: () => service.runCycle() });
   }
 
-  const server = http.createServer(async (request, response) => {
-    const requestOrigin = request.headers.origin || "";
-    const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
-    const responseOrigin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : "";
-    const errorBody = (error, message) => ({ error, message });
-    if (requestOrigin && !responseOrigin) return sendJson(response, 403, errorBody("ORIGIN_NOT_ALLOWED", "Origem não permitida."));
-    if (request.method === "OPTIONS") {
-      response.statusCode = 204;
-      if (responseOrigin) response.setHeader("Access-Control-Allow-Origin", responseOrigin);
-      response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
-      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      response.setHeader("Access-Control-Allow-Private-Network", "true");
-      return response.end();
-    }
-    const url = new URL(request.url, "http://127.0.0.1");
-    try {
-      if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true, database: "available" }, responseOrigin);
-      if (request.method === "POST" && url.pathname === "/api/auth/login") {
-        const rateKey = loginRateKey(request);
-        const rate = loginRateStatus(rateKey);
-        if (!rate.allowed) {
-          response.setHeader("Retry-After", String(rate.retryAfter));
-          return sendJson(response, 429, errorBody("LOGIN_RATE_LIMITED", "Muitas tentativas de login. Aguarde antes de tentar novamente."), responseOrigin);
-        }
-        const body = await readJson(request);
-        const user = database.getUserForLogin(body.usuario);
-        if (!user || !user.ativo || !verifyPassword(body.senha || "", user.senha_hash)) {
-          const retryAfter = recordLoginFailure(rateKey);
-          if (retryAfter) response.setHeader("Retry-After", String(retryAfter));
-          return sendJson(response, retryAfter ? 429 : 401, { ...errorBody(retryAfter ? "LOGIN_RATE_LIMITED" : "INVALID_CREDENTIALS", retryAfter ? "Muitas tentativas de login. Aguarde antes de tentar novamente." : "Usuário ou senha inválidos.") }, responseOrigin);
-        }
-        loginFailures.delete(rateKey);
-        const token = crypto.randomBytes(32).toString("base64url");
-        const expiraEm = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
-        database.createSession({ usuarioId: user.id, tokenHash: hashToken(token), expiraEm });
-        return sendJson(response, 200, { ok: true, user: publicUser(user), session: token, expiraEm }, responseOrigin);
-      }
-      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
-        const token = readBearer(request);
-        if (token) database.revokeSession(hashToken(token));
-        return sendJson(response, 200, { ok: true }, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/auth/current") {
-        const user = await requireSession(request);
-        return user ? sendJson(response, 200, { ok: true, user: publicUser(user) }, responseOrigin) : sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
-      }
-      const currentUser = await requireSession(request);
-      if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
-      if (request.method === "GET" && url.pathname === "/api/digital-sync/status") {
-        if (currentUser.role !== "coordinator") return sendJson(response, 403,
-          errorBody("FORBIDDEN", "Somente a coordenação pode consultar a sincronização."), responseOrigin);
-        let state = null, stateError = null;
-        if (syncState) {
-          try { state = syncState.status(); }
-          catch (error) { stateError = safeError(error); }
-        }
-        return sendJson(response, 200, { ok: true, enabled: digitalSyncConfig.enabled === true,
-          writeEnabled: digitalSyncConfig.writeEnabled === true,
-          maxImportsPerCycle: digitalSyncConfig.maxImportsPerCycle ?? 1,
-          intervalMinutes: digitalSyncConfig.intervalMinutes,
-          nextRunAt: syncScheduler?.nextDueAt() ?? null, state, stateError }, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/solicitations/assignees") {
-        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis."), responseOrigin);
-        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
-      }
-      if (request.method === "POST" && url.pathname === "/api/solicitation-notifications/poll") {
-        return sendJson(response, 200, database.pollSolicitationNotifications(currentUser.id), responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/solicitation-notifications") {
-        return sendJson(response, 200, database.listSolicitationNotifications(currentUser.id), responseOrigin);
-      }
-      const notificationAction = url.pathname.match(/^\/api\/solicitation-notifications\/([^/]+)\/(seen|open|resolve|snooze|presented)$/);
-      if (notificationAction && request.method === "POST") {
-        const body = await readJson(request);
-        const result = database.updateSolicitationNotification(currentUser.id, { id: decodeURIComponent(notificationAction[1]), action: notificationAction[2], minutes: body.minutes });
-        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/solicitations") {
-        return sendJson(response, 200, { ok: true, rows: database.listSolicitations({ userId: currentUser.id, role: currentUser.role }) }, responseOrigin);
-      }
-      if (request.method === "POST" && url.pathname === "/api/solicitations") {
-        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode criar solicitações."), responseOrigin);
-        const body = await readJson(request);
-        const result = database.createSolicitation({
-          descricao: body.descricao,
-          observacao: body.observacao,
-          sessao_codigo: body.sessao_codigo,
-          responsavel_usuario_id: body.responsavel_usuario_id,
-          prazo_em: body.prazo_em,
-          criado_por_usuario_id: currentUser.id,
-          criado_por_nome: currentUser.nome,
-        });
-        return sendJson(response, result.ok ? 201 : 400, result, responseOrigin);
-      }
-      const solicitationAction = url.pathname.match(/^\/api\/solicitations\/([^/]+)\/(start|complete|cancel|reopen)$/);
-      if (solicitationAction && request.method === "POST") {
-        const [, solicitationId, action] = solicitationAction;
-        if (["cancel", "reopen"].includes(action) && currentUser.role !== "coordinator")
-          return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode cancelar ou reabrir solicitações."), responseOrigin);
-        const body = await readJson(request);
-        const result = database.transitionSolicitation({ id: decodeURIComponent(solicitationId), revision: body.revision, action, actorUserId: currentUser.id, actorRole: currentUser.role });
-        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      const solicitation = url.pathname.match(/^\/api\/solicitations\/([^/]+)$/);
-      if (solicitation && request.method === "GET") {
-        const item = database.getSolicitation(decodeURIComponent(solicitation[1]), { userId: currentUser.id, role: currentUser.role });
-        return item ? sendJson(response, 200, { ok: true, solicitation: item }, responseOrigin)
-          : sendJson(response, 404, errorBody("NOT_FOUND", "Solicitação não encontrada."), responseOrigin);
-      }
-      if (solicitation && request.method === "PATCH") {
-        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode editar solicitações."), responseOrigin);
-        const body = await readJson(request);
-        const result = database.updateSolicitation({ id: decodeURIComponent(solicitation[1]), revision: body.revision, values: body.values });
-        const status = result.ok ? 200 : result.error === "NOT_FOUND" ? 404 : result.error === "REVISION_CONFLICT" ? 409 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/digital-shipments") {
-        const result = database.listDigitalShipments({
-          search: url.searchParams.get("search") || "", page: url.searchParams.get("page"),
-          pageSize: url.searchParams.get("pageSize"), sort: url.searchParams.get("sort") || "date-desc",
-          from: url.searchParams.get("from") || "", to: url.searchParams.get("to") || "",
-        });
-        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
-      }
-      if (request.method === "POST" && url.pathname === "/api/digital-shipments/resolve-sessions") {
-        const body = await readJson(request);
-        const result = database.resolveDigitalShipmentSessions(body);
-        return sendJson(response, result.ok ? 200 : 400, result, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname.startsWith("/api/digital-shipments/orders/")) {
-        const orderId = decodeURIComponent(url.pathname.slice("/api/digital-shipments/orders/".length));
-        const result = database.getDigitalShipmentsForOrder(orderId);
-        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
-      }
-      if (request.method === "POST" && url.pathname === "/api/digital-shipments") {
-        const body = await readJson(request);
-        const result = database.createDigitalShipment({ ...body, actorUserId: currentUser.id, actorRole: currentUser.role });
-        const status = result.ok ? 201 : result.error === "FORBIDDEN" ? 403
-          : ["DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
-            : result.error === "ORDER_NOT_FOUND" ? 404 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      const digitalShipmentMatch = url.pathname.match(/^\/api\/digital-shipments\/([^/]+)$/);
-      if (digitalShipmentMatch && request.method === "GET") {
-        const shipment = database.getDigitalShipment(decodeURIComponent(digitalShipmentMatch[1]));
-        return sendJson(response, shipment ? 200 : 404, shipment ? { ok: true, shipment } : errorBody("NOT_FOUND", "Pedido Digital não encontrado."), responseOrigin);
-      }
-      if (digitalShipmentMatch && request.method === "PATCH") {
-        const body = await readJson(request);
-        const result = database.updateDigitalShipment({ ...body, id: decodeURIComponent(digitalShipmentMatch[1]), actorUserId: currentUser.id, actorRole: currentUser.role });
-        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403
-          : ["REVISION_CONFLICT", "DUPLICATE_DIGITAL_ORDER", "DUPLICATE_SESSIONS"].includes(result.error) ? 409
-            : result.error === "NOT_FOUND" ? 404 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/orders") {
-        const scope = url.searchParams.get("scope") === "mine" ? "mine" : "all";
-        const rows = database.listOrders({ search: url.searchParams.get("search") || "", filter: url.searchParams.get("filter") || "all", scope, userId: scope === "mine" ? currentUser.id : undefined });
-        return sendJson(response, 200, { ok: true, rows }, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/orders/treatment-assignees") {
-        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar responsáveis pelo tratamento."), responseOrigin);
-        return sendJson(response, 200, { ok: true, rows: database.listActiveUsers() }, responseOrigin);
-      }
-      if (request.method === "GET" && url.pathname === "/api/dashboard") return sendJson(response, 200, { ok: true, dashboard: database.getDashboard() }, responseOrigin);
-      const clientProfileMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/client-profile$/);
-      if (clientProfileMatch && request.method === "GET") {
-        const result = database.getOrderClientProfile(decodeURIComponent(clientProfileMatch[1]));
-        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
-      }
-      const assignmentMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee$/);
-      if (assignmentMatch && request.method === "PATCH") {
-        const body = await readJson(request);
-        const result = database.updateTreatmentAssignee({ id: decodeURIComponent(assignmentMatch[1]), revisao: body.revisao, responsavelUsuarioId: body.responsavelUsuarioId, actorUserId: currentUser.id, actorRole: currentUser.role });
-        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      const automaticMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/treatment-assignee\/automatic$/);
-      if (automaticMatch && request.method === "POST") {
-        const body = await readJson(request);
-        const result = database.restoreAutomaticTreatmentAssignee({ id: decodeURIComponent(automaticMatch[1]), revisao: body.revisao, actorUserId: currentUser.id, actorRole: currentUser.role });
-        const status = result.ok ? 200 : result.error === "FORBIDDEN" ? 403 : result.error === "REVISION_CONFLICT" ? 409 : result.message === "Pedido não encontrado." ? 404 : 400;
-        return sendJson(response, status, result, responseOrigin);
-      }
-      const match = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
-      if (match && request.method === "GET") {
-        const result = database.getOrder(decodeURIComponent(match[1]));
-        return sendJson(response, result.ok ? 200 : 404, result, responseOrigin);
-      }
-      if (match && request.method === "PATCH") {
-        const body = await readJson(request);
-        if (!body.values || typeof body.values !== "object" || Array.isArray(body.values)) return sendJson(response, 400, errorBody("INVALID_INPUT", "values é obrigatório."), responseOrigin);
-        const result = database.updateOrder({ id: decodeURIComponent(match[1]), revisao: body.revisao, values: body.values, usuarioId: currentUser.id });
-        return sendJson(response, result.ok ? 200 : result.error === "REVISION_CONFLICT" ? 409 : 400, result, responseOrigin);
-      }
-      return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
-    } catch (error) {
-      const statusCode = error.code === "INVALID_JSON" ? 400 : error.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
-      return sendJson(response, statusCode, errorBody(error.code || "INTERNAL_ERROR", statusCode === 500 ? "Erro interno." : error.message), responseOrigin);
-    }
-  });
+  const apiRequestHandler = createApiRequestHandler({ allowedOrigin, lanPilot, digitalSyncConfig, syncState, syncScheduler });
+  const server = http.createServer(apiRequestHandler);
 
   return new Promise((resolve, reject) => {
     const fail = (error) => { database.close(); active = false; reject(error); };
@@ -346,5 +371,5 @@ if (require.main === module) {
   startApiServer({ userDataPath, port: Number(process.env.GESTAO_API_PORT || 0) }).then(({ origin }) => console.log(origin));
 }
 
-module.exports = { startApiServer };
+module.exports = { startApiServer, createApiRequestHandler };
 module.exports.createPasswordHash = createPasswordHash;
