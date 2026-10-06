@@ -10,17 +10,21 @@ function readDatabaseState(dbPath) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     db.exec("PRAGMA query_only=ON");
-    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name));
-    if (!["pedidos", "digital_envios", "digital_envio_itens"].every((name) => tables.has(name)))
-      throw new Error("DIGITAL_DB_SCHEMA_ERROR");
-    const orders = db.prepare("SELECT id,sessao,revisao FROM pedidos").all();
-    const sessions = new Map(orders.map((row) => [String(row.sessao).toUpperCase(), row.id]));
-    const revisions = new Map(orders.map((row) => [row.id, row.revisao]));
-    const existing = new Map(db.prepare("SELECT id,numero_pedido_digital,itens_digital FROM digital_envios").all()
-      .map((row) => [orderNumber(row.numero_pedido_digital), { id: row.id, total: row.itens_digital }]));
-    const counts = db.prepare("SELECT (SELECT count(*) FROM digital_envios) envios, (SELECT count(*) FROM digital_envio_itens) relacoes").get();
-    return { sessions, revisions, existing, counts };
+    return readDatabaseStateFromConnection(db);
   } finally { db.close(); }
+}
+
+function readDatabaseStateFromConnection(db) {
+  const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name));
+  if (!["pedidos", "digital_envios", "digital_envio_itens"].every((name) => tables.has(name)))
+    throw new Error("DIGITAL_DB_SCHEMA_ERROR");
+  const orders = db.prepare("SELECT id,sessao,revisao FROM pedidos").all();
+  const sessions = new Map(orders.map((row) => [String(row.sessao).toUpperCase(), row.id]));
+  const revisions = new Map(orders.map((row) => [row.id, row.revisao]));
+  const existing = new Map(db.prepare("SELECT id,numero_pedido_digital,itens_digital FROM digital_envios").all()
+    .map((row) => [orderNumber(row.numero_pedido_digital), { id: row.id, total: row.itens_digital }]));
+  const counts = db.prepare("SELECT (SELECT count(*) FROM digital_envios) envios, (SELECT count(*) FROM digital_envio_itens) relacoes").get();
+  return { sessions, revisions, existing, counts };
 }
 
 function makeSnapshot(listing, pendingIds = []) {
@@ -149,4 +153,4 @@ async function buildDryRun({ client, snapshot, options, dbState }) {
     complete: !scan.gap };
 }
 
-module.exports = { buildDryRun, cancelled, identity, makeSnapshot, planDetail, readDatabaseState, scanRecent };
+module.exports = { readDatabaseStateFromConnection, buildDryRun, cancelled, identity, makeSnapshot, planDetail, readDatabaseState, scanRecent };

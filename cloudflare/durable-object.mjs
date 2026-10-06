@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import database from "../electron/database.cjs";
 import { createApiRequestHandler } from "../server/api-server.cjs";
 import { createSqliteSyncAdapter } from "../server/cloudflare/sqlite-sync-adapter.cjs";
+import { CloudDigitalSync, safeError } from "../server/cloudflare/digital-sync.cjs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const IMPORT_PREFIX = "/__internal/import/";
@@ -83,15 +84,19 @@ export class ApiDatabase {
       CREATE TABLE IF NOT EXISTS _gl_import_batches(batch_id TEXT PRIMARY KEY,table_name TEXT NOT NULL,row_count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS _gl_login_rate_limits(ip_hash TEXT PRIMARY KEY,window_started INTEGER NOT NULL,
         failures INTEGER NOT NULL,blocked_until INTEGER NOT NULL)`);
+    this.digitalSync = new CloudDigitalSync(this.connection, ctx.storage, env);
     this.handler = createApiRequestHandler({
       allowedOrigin: ["null", "file://"],
-      digitalSyncConfig: { enabled: false, writeEnabled: false, intervalMinutes: null, maxImportsPerCycle: 0 },
+      digitalSyncConfig: this.digitalSync.options,
+      syncState: this.digitalSync.state,
+      syncScheduler: this.digitalSync,
       loginRateStore: createLoginRateStore(this.sql),
     });
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/__internal/digital-sync/")) return this.handleDigitalSync(request, url.pathname);
     if (url.pathname.startsWith(IMPORT_PREFIX)) return this.handleImport(request, url.pathname.slice(IMPORT_PREFIX.length));
     if (request.method === "GET" && url.pathname === "/health") return this.health();
     if (!this.isReady()) return json({ ok: false, database: "not-ready" }, 503);
@@ -122,6 +127,25 @@ export class ApiDatabase {
 
   isReady() {
     return this.sql.exec("SELECT value FROM _gl_cloud_meta WHERE key='migration_complete'").toArray()[0]?.value === "1";
+  }
+
+  async handleDigitalSync(request, pathname) {
+    if (!constantTimeEqual(request.headers.get("authorization")?.replace(/^Bearer\s+/i, ""),
+      String(this.env.DIGITAL_SYNC_INTERNAL_TOKEN || "").trim())) return json({ error: "NOT_FOUND" }, 404);
+    if (!this.isReady()) return json({ error: "DATABASE_NOT_READY" }, 503);
+    try {
+      if (request.method === "GET" && pathname === "/__internal/digital-sync/status") return json(this.digitalSync.inspect());
+      if (request.method !== "POST") return json({ error: "NOT_FOUND" }, 404);
+      const text = await request.text();
+      if (Buffer.byteLength(text) > MAX_BODY_BYTES) return json({ error: "PAYLOAD_TOO_LARGE" }, 413);
+      const body = text ? JSON.parse(text) : {};
+      if (pathname === "/__internal/digital-sync/migrate") {
+        if (this.digitalSync.options.writeEnabled) return json({ error: "DIGITAL_WRITE_ENABLED" }, 409);
+        return json(this.digitalSync.state.migrate(body));
+      }
+      if (pathname === "/__internal/digital-sync/run") return json(await this.digitalSync.run({ dryRun: body.dryRun === true }));
+      return json({ error: "NOT_FOUND" }, 404);
+    } catch (error) { return json({ error: safeError(error) }, 409); }
   }
 
   health() {

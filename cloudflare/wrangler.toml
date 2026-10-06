@@ -5,6 +5,11 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = false
 
+[vars]
+DIGITAL_SYNC_ENABLED = "true"
+DIGITAL_SYNC_WRITE_ENABLED = "false"
+DIGITAL_SYNC_MAX_IMPORTS_PER_CYCLE = "1"
+
 [observability]
 enabled = true
 

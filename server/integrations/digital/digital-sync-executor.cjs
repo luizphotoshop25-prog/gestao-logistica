@@ -61,7 +61,9 @@ function applyPlan(db, plan, { failAt = null } = {}) {
   if (plan?.category?.startsWith("REVIEW_")) return { outcome: plan.category };
   const invalid = validatePlan(plan);
   if (invalid) return { outcome: invalid };
-  db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=2000; BEGIN IMMEDIATE");
+  db.exec("PRAGMA foreign_keys=ON");
+  db.exec("PRAGMA busy_timeout=2000");
+  db.exec("BEGIN IMMEDIATE");
   let committed = false;
   try {
     const duplicate = existingOutcome(db, plan);
@@ -101,44 +103,57 @@ function executeOnTemporaryCopy(dbPath, plan, options) {
 
 function executeAuthorizedPlan(dbPath, plan, { syncEnabled = false, writeEnabled = false,
   stateStore = null, cycleBudget = null } = {}) {
-  if (syncEnabled !== true || writeEnabled !== true)
-    return { outcome: "DIGITAL_WRITE_DISABLED" };
+  const denied = authorizeExecution(plan, { syncEnabled, writeEnabled, stateStore, cycleBudget });
+  if (denied) return denied;
+  const target = fs.realpathSync(path.resolve(dbPath));
+  const db = new DatabaseSync(target);
+  try { return executeAuthorizedConnection(db, plan, { syncEnabled, writeEnabled, stateStore, cycleBudget }); }
+  finally { db.close(); }
+}
+
+function executeAuthorizedConnection(db, plan, { syncEnabled = false, writeEnabled = false,
+  stateStore = null, cycleBudget = null, failAt = null } = {}) {
+  const denied = authorizeExecution(plan, { syncEnabled, writeEnabled, stateStore, cycleBudget });
+  if (denied) return denied;
+  const result = applyPlan(db, plan, { failAt });
+  if (result.outcome === "IMPORTED") cycleBudget.imported++;
+  return result;
+}
+
+function authorizeExecution(plan, { syncEnabled, writeEnabled, stateStore, cycleBudget }) {
+  if (syncEnabled !== true || writeEnabled !== true) return { outcome: "DIGITAL_WRITE_DISABLED" };
   if (!cycleBudget) return { outcome: "DIGITAL_CYCLE_BUDGET_REQUIRED" };
   if (!Number.isSafeInteger(cycleBudget.limit) || cycleBudget.limit < 1
     || !Number.isSafeInteger(cycleBudget.imported) || cycleBudget.imported < 0)
     return { outcome: "DIGITAL_CONFIG_ERROR" };
-  if (cycleBudget.imported >= cycleBudget.limit)
-    return { outcome: "IMPORT_LIMIT_REACHED" };
+  if (cycleBudget.imported >= cycleBudget.limit) return { outcome: "IMPORT_LIMIT_REACHED" };
   if (!stateStore || !plan?.idFotoPedido || stateStore.isBaselineOrder(plan.idFotoPedido))
     return { outcome: "BASELINE_EXISTING_UNIMPORTED" };
-  const target = fs.realpathSync(path.resolve(dbPath));
-  const db = new DatabaseSync(target);
-  try {
-    const result = applyPlan(db, plan);
-    if (result.outcome === "IMPORTED" && cycleBudget) cycleBudget.imported++;
-    return result;
-  }
-  finally { db.close(); }
+  return null;
 }
 
 function inspectCommittedShipment(dbPath, number) {
   const db = new DatabaseSync(path.resolve(dbPath), { readOnly: true });
   try {
     db.exec("PRAGMA query_only=ON");
-    const shipment = db.prepare(`SELECT id,revision,itens_digital FROM digital_envios
-      WHERE numero_pedido_digital=? COLLATE NOCASE`).get(normalizeDigitalShipmentNumber(number));
-    if (!shipment) return null;
-    const event = db.prepare(`SELECT 1 FROM digital_envio_eventos
-      WHERE digital_envio_id=? AND acao='digital_sync_created' AND usuario_id IS NULL`).get(shipment.id);
-    if (!event) return "EXISTING_MANUAL";
-    const items = db.prepare(`SELECT quantidade_enviada FROM digital_envio_itens
-      WHERE digital_envio_id=?`).all(shipment.id);
-    if (shipment.revision !== 1 || !items.length || validateShipmentQuantities(shipment.itens_digital,
-      items.map((item, index) => ({ pedidoId: String(index), quantidadeEnviada: item.quantidade_enviada }))))
-      return "REVIEW_IMPORTED_CHANGED";
-    return "ALREADY_IMPORTED";
+    return inspectCommittedConnection(db, number);
   } finally { db.close(); }
 }
 
-module.exports = { executeOnTemporaryCopy, executeAuthorizedPlan,
+function inspectCommittedConnection(db, number) {
+  const shipment = db.prepare(`SELECT id,revision,itens_digital FROM digital_envios
+    WHERE numero_pedido_digital=? COLLATE NOCASE`).get(normalizeDigitalShipmentNumber(number));
+  if (!shipment) return null;
+  const event = db.prepare(`SELECT 1 FROM digital_envio_eventos
+    WHERE digital_envio_id=? AND acao='digital_sync_created' AND usuario_id IS NULL`).get(shipment.id);
+  if (!event) return "EXISTING_MANUAL";
+  const items = db.prepare(`SELECT quantidade_enviada FROM digital_envio_itens
+    WHERE digital_envio_id=?`).all(shipment.id);
+  if (shipment.revision !== 1 || !items.length || validateShipmentQuantities(shipment.itens_digital,
+    items.map((item, index) => ({ pedidoId: String(index), quantidadeEnviada: item.quantidade_enviada }))))
+    return "REVIEW_IMPORTED_CHANGED";
+  return "ALREADY_IMPORTED";
+}
+
+module.exports = { applyPlan, executeAuthorizedConnection, inspectCommittedConnection, executeOnTemporaryCopy, executeAuthorizedPlan,
   inspectCommittedShipment, validatePlan, SOURCE };

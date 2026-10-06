@@ -63,10 +63,18 @@ function createSchema(db) {
 }
 
 class DigitalSyncState {
-  constructor(dataDir) {
+  constructor(dataDir, { connectionFactory = null } = {}) {
+    if (connectionFactory) {
+      this.connectionFactory = connectionFactory;
+      return;
+    }
     if (!path.isAbsolute(dataDir)) throw coded("DIGITAL_CONFIG_ERROR");
     this.dataDir = dataDir;
     this.file = stateFile(dataDir);
+  }
+
+  open(readOnly = true) {
+    return this.connectionFactory ? this.connectionFactory(readOnly) : openVerified(this.file, readOnly);
   }
 
   importBaseline(snapshot, reconciliation) {
@@ -130,7 +138,7 @@ class DigitalSyncState {
   }
 
   loadSnapshot() {
-    const db = openVerified(this.file);
+    const db = this.open();
     try {
       const rows = db.prepare(`SELECT o.* FROM scan_window w JOIN observations o
         ON o.id_foto_pedido=w.id_foto_pedido ORDER BY w.position`).all();
@@ -150,7 +158,7 @@ class DigitalSyncState {
   }
 
   startRun() {
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try {
       const runId = randomUUID();
       db.prepare("INSERT INTO runs(run_id,started_at,status,checkpoint) VALUES(?,?,?,0)")
@@ -160,7 +168,7 @@ class DigitalSyncState {
   }
 
   finishRun(runId, result) {
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try {
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -221,14 +229,14 @@ class DigitalSyncState {
   }
 
   failRun(runId, code) {
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try { db.prepare("UPDATE runs SET status='FAILED',completed_at=?,error_code=? WHERE run_id=? AND status='STARTED'")
       .run(new Date().toISOString(), /^DIGITAL_[A-Z_]+$/.test(code) ? code : "DIGITAL_SYNC_FAILED", runId); }
     finally { db.close(); }
   }
 
   markRunError(runId, code) {
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try { db.prepare(`UPDATE runs SET status='PARTIAL',error_code=?
       WHERE run_id=? AND status='COMPLETE'`).run(
       /^DIGITAL_[A-Z_]+$/.test(code) ? code : "DIGITAL_SYNC_FAILED", runId); }
@@ -244,7 +252,7 @@ class DigitalSyncState {
     const state = ["IMPORTED", "ALREADY_IMPORTED"].includes(classification) ? "IMPORTED"
       : classification.startsWith("PENDING_") ? "PENDING"
         : classification === "IMPORT_LIMIT_REACHED" ? "READY" : "REVIEW";
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try {
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -258,7 +266,7 @@ class DigitalSyncState {
   }
 
   async classifyBaselineUnimported() {
-    const db = openVerified(this.file, false);
+    const db = this.open(false);
     try {
       const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
       const pending = db.prepare(`SELECT COUNT(*) n FROM observations WHERE first_seen_at=?
@@ -282,7 +290,7 @@ class DigitalSyncState {
   }
 
   inspect() {
-    const db = openVerified(this.file);
+    const db = this.open();
     try { return {
       observations: db.prepare("SELECT COUNT(*) n FROM observations").get().n,
       window: db.prepare("SELECT COUNT(*) n FROM scan_window").get().n,
@@ -294,7 +302,7 @@ class DigitalSyncState {
   }
 
   status() {
-    const db = openVerified(this.file);
+    const db = this.open();
     try {
       const last = db.prepare(`SELECT started_at,completed_at,status,checkpoint,error_code
         FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 1`).get();
@@ -324,7 +332,7 @@ class DigitalSyncState {
   }
 
   isBaselineOrder(idFotoPedido) {
-    const db = openVerified(this.file);
+    const db = this.open();
     try {
       const baselineAt = db.prepare("SELECT value FROM meta WHERE key='baseline_observed_at'").get().value;
       const row = db.prepare("SELECT first_seen_at FROM observations WHERE id_foto_pedido=?")

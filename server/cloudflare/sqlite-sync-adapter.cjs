@@ -3,6 +3,8 @@ function createSqliteSyncAdapter(sql) {
 
   function execute(query, bindings = []) {
     const statement = String(query).trim();
+    // DO transactions serialize SQLite access; the filesystem lock timeout is unsupported.
+    if (/^PRAGMA\s+busy_timeout\s*=\s*\d+\s*;?$/i.test(statement)) return null;
     if (/^(BEGIN(?:\s+IMMEDIATE)?|COMMIT|END|ROLLBACK)(?:\s*;)?$/i.test(statement)) {
       // A Durable Object wraps a complete API operation in transactionSync.
       // The existing domain methods retain their transaction markers for Node.
