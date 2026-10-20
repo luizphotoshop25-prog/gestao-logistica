@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const OFFICIAL_REMOTE_CONFIG_URL = "https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/master/remote-config.json";
+const OFFICIAL_REMOTE_CONFIG_API_URL = "https://api.github.com/repos/luizphotoshop25-prog/gestao-logistica/contents/remote-config.json?ref=master";
 const MAX_CONFIG_BYTES = 4096;
 const CONFIG_TIMEOUT_MS = 6000;
 const API_HEALTH_TIMEOUT_MS = 5000;
@@ -57,17 +58,23 @@ async function fetchRemoteConfig({ fetchImpl = globalThis.fetch, configUrl = OFF
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(OFFICIAL_REMOTE_CONFIG_URL, {
+    const response = await fetchImpl(OFFICIAL_REMOTE_CONFIG_API_URL, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: { accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Cache-Control": "no-cache" },
       redirect: "error",
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`GitHub respondeu HTTP ${response.status} ao consultar a configuração remota.`);
-    if (response.url && response.url !== OFFICIAL_REMOTE_CONFIG_URL) throw new Error("GitHub redirecionou a configuração para uma origem inesperada.");
+    if (response.url && response.url !== OFFICIAL_REMOTE_CONFIG_API_URL) throw new Error("GitHub redirecionou a configuração para uma origem inesperada.");
     const content = await readResponseText(response, maxBytes);
+    let file;
+    try { file = JSON.parse(content); } catch { throw new Error("A resposta de configuração do GitHub não contém JSON válido."); }
+    if (file?.path !== "remote-config.json" || file?.encoding !== "base64" || typeof file.content !== "string")
+      throw new Error("O arquivo de configuração do GitHub tem formato inválido.");
+    const configText = Buffer.from(file.content, "base64").toString("utf8");
+    if (Buffer.byteLength(configText, "utf8") > maxBytes) throw new Error("A configuração remota excede o tamanho permitido.");
     let parsed;
-    try { parsed = JSON.parse(content); } catch { throw new Error("A configuração remota não contém JSON válido."); }
+    try { parsed = JSON.parse(configText); } catch { throw new Error("A configuração remota não contém JSON válido."); }
     return validateRemoteConfig(parsed);
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("A consulta à configuração remota excedeu o tempo limite.");
@@ -126,6 +133,7 @@ async function checkRemoteApiHealth(apiBaseUrl, { fetchImpl = globalThis.fetch, 
 
 module.exports = {
   OFFICIAL_REMOTE_CONFIG_URL,
+  OFFICIAL_REMOTE_CONFIG_API_URL,
   MAX_CONFIG_BYTES,
   CONFIG_TIMEOUT_MS,
   validateRemoteConfig,
