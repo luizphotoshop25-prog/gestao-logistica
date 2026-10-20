@@ -1,6 +1,6 @@
 {
   "name": "gestao-logistica",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "private": true,
   "type": "module",
   "main": "electron/bootstrap.cjs",
@@ -44,6 +44,7 @@
     "smoke:ui-preferences": "node tests/smoke-ui-preferences.cjs",
     "smoke:packaged-ui-preferences": "node tests/smoke-packaged-ui-preferences.cjs",
     "smoke:lan": "node tests/smoke-lan.cjs",
+    "smoke:siwin-sync": "node tests/smoke-siwin-sync-http.cjs",
     "server:lan": "node server/lan-server.cjs",
     "smoke:cloudflare": "node tests/smoke-cloudflare-do.cjs",
     "pilot:prepare": "node scripts/prepare-lan-pilot.cjs",

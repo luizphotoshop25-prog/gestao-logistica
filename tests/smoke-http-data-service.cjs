@@ -32,8 +32,9 @@ async function main() {
     assert.equal((await dataService.dashboard()).dashboard.total, 1);
     assert.equal((await dataService.updateOrder({ id, revisao: (await dataService.getOrder(id)).order.revisao, values: { observacoes: "Atualizado pelo httpDataService." } })).ok, true);
     assert.equal((await dataService.getOrder(id)).order.observacoes, "Atualizado pelo httpDataService.");
-    assert.equal((await dataService.syncSiwin()).ok, false);
-    console.log("httpDataService: seleção explícita, CRUD HTTP e bloqueio de integração local aprovados.");
+    assert.equal((await dataService.syncSiwin()).error, "NOT_FOUND");
+    assert.equal((await dataService.siwinStatus()).error, "NOT_FOUND");
+    console.log("httpDataService: seleção explícita, CRUD HTTP e bloqueio de integração SIWIN fora do piloto LAN aprovados.");
   } finally {
     if (api) await api.close(); else database.close();
     assert.equal(path.dirname(root), path.resolve(os.tmpdir()));

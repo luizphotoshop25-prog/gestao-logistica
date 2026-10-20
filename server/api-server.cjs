@@ -5,6 +5,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const net = require("node:net");
 const database = require("../electron/database.cjs");
+const siwin = require("../electron/siwin.cjs");
 const { digitalOptions } = require("./integrations/digital/sigi-config.cjs");
 const { DigitalSyncState } = require("./integrations/digital/digital-sync-state.cjs");
 const { DigitalSyncService, safeError } = require("./integrations/digital/digital-sync-service.cjs");
@@ -91,8 +92,9 @@ function requireSession(request) {
 
 function createApiRequestHandler(options = {}) {
   const { allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions(),
-    syncState = null, syncScheduler = null, loginRateStore = null } = options;
-  const dispatchParsed = (request, response) => {
+    syncState = null, syncScheduler = null, loginRateStore = null,
+    runSiwinSync = siwin.syncClients } = options;
+  const dispatchParsed = async (request, response) => {
     const requestOrigin = request.headers.origin || "";
     const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
     const responseOrigin = requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : "";
@@ -141,6 +143,24 @@ function createApiRequestHandler(options = {}) {
       }
       const currentUser = requireSession(request);
       if (!currentUser) return sendJson(response, 401, { ok: false, message: "Sessão inválida ou expirada." }, responseOrigin);
+      if (request.method === "GET" && url.pathname === "/api/integrations/siwin/status") {
+        if (!lanPilot) return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode consultar a sincronização SIWIN."), responseOrigin);
+        const status = database.getSiwinStatus();
+        return sendJson(response, 200, { ok: true, lastSync: status.lastSync || null }, responseOrigin);
+      }
+      if (request.method === "POST" && url.pathname === "/api/integrations/siwin/sync") {
+        if (!lanPilot) return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
+        if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode iniciar a sincronização SIWIN."), responseOrigin);
+        try {
+          database.createSafetyBackup("sincronizacao-siwin-manual");
+          const result = await runSiwinSync(database);
+          const status = database.getSiwinStatus();
+          return sendJson(response, 200, { ...result, ok: true, lastSync: status.lastSync || new Date().toISOString() }, responseOrigin);
+        } catch (error) {
+          return sendJson(response, 500, { ok: false, message: siwin.safeError(error) }, responseOrigin);
+        }
+      }
       if (request.method === "GET" && url.pathname === "/api/digital-sync/status") {
         if (currentUser.role !== "coordinator") return sendJson(response, 403,
           errorBody("FORBIDDEN", "Somente a coordenação pode consultar a sincronização."), responseOrigin);
@@ -316,7 +336,8 @@ function createApiRequestHandler(options = {}) {
   return handler;
 }
 function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0,
-  allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions() } = {}) {
+  allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions(),
+  runSiwinSync = siwin.syncClients } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
   if (lanPilot) {
     if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("dataDirectory absoluto é obrigatório no modo LAN.");
@@ -347,7 +368,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       run: () => service.runCycle() });
   }
 
-  const apiRequestHandler = createApiRequestHandler({ allowedOrigin, lanPilot, digitalSyncConfig, syncState, syncScheduler });
+  const apiRequestHandler = createApiRequestHandler({ allowedOrigin, lanPilot, digitalSyncConfig, syncState, syncScheduler, runSiwinSync });
   const server = http.createServer(apiRequestHandler);
 
   return new Promise((resolve, reject) => {
