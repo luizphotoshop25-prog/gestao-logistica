@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const net = require("node:net");
 const database = require("../electron/database.cjs");
 const siwin = require("../electron/siwin.cjs");
+const thunderbird = require("../electron/thunderbird.cjs");
 const { digitalOptions } = require("./integrations/digital/sigi-config.cjs");
 const { DigitalSyncState } = require("./integrations/digital/digital-sync-state.cjs");
 const { DigitalSyncService, safeError } = require("./integrations/digital/digital-sync-service.cjs");
@@ -93,7 +94,7 @@ function requireSession(request) {
 function createApiRequestHandler(options = {}) {
   const { allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions(),
     syncState = null, syncScheduler = null, loginRateStore = null,
-    runSiwinSync = siwin.syncClients } = options;
+    runSiwinSync = siwin.syncClients, runThunderbirdSync = thunderbird.sync } = options;
   const dispatchParsed = async (request, response) => {
     const requestOrigin = request.headers.origin || "";
     const allowedOrigins = Array.isArray(allowedOrigin) ? allowedOrigin : allowedOrigin ? [allowedOrigin] : [];
@@ -153,10 +154,22 @@ function createApiRequestHandler(options = {}) {
         if (!lanPilot) return sendJson(response, 404, errorBody("NOT_FOUND", "Rota não encontrada."), responseOrigin);
         if (currentUser.role !== "coordinator") return sendJson(response, 403, errorBody("FORBIDDEN", "Somente a coordenação pode iniciar a sincronização SIWIN."), responseOrigin);
         try {
-          database.createSafetyBackup("sincronizacao-siwin-manual");
-          const result = await runSiwinSync(database);
+          database.createSafetyBackup("sincronizacao-integrada-manual");
+          let siwinResult;
+          let thunderbirdResult;
+          try { siwinResult = await runSiwinSync(database); }
+          catch (error) { siwinResult = { ok: false, message: siwin.safeError(error) }; }
+          try { thunderbirdResult = await runThunderbirdSync(database); }
+          catch { thunderbirdResult = { ok: false, message: "Não foi possível ler a caixa de entrada local do Thunderbird." }; }
           const status = database.getSiwinStatus();
-          return sendJson(response, 200, { ...result, ok: true, lastSync: status.lastSync || new Date().toISOString() }, responseOrigin);
+          const lastSync = status.lastSync || new Date().toISOString();
+          return sendJson(response, 200, {
+            ...siwinResult,
+            ok: siwinResult?.ok !== false,
+            siwin: { ...siwinResult, ok: siwinResult?.ok !== false, lastSync },
+            thunderbird: thunderbirdResult,
+            lastSync,
+          }, responseOrigin);
         } catch (error) {
           return sendJson(response, 500, { ok: false, message: siwin.safeError(error) }, responseOrigin);
         }
@@ -337,7 +350,7 @@ function createApiRequestHandler(options = {}) {
 }
 function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port = 0,
   allowedOrigin = "", lanPilot = false, digitalSyncConfig = digitalOptions(),
-  runSiwinSync = siwin.syncClients } = {}) {
+  runSiwinSync = siwin.syncClients, runThunderbirdSync = thunderbird.sync } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Porta da API inválida.");
   if (lanPilot) {
     if (!dataDirectory || !path.isAbsolute(dataDirectory)) throw new Error("dataDirectory absoluto é obrigatório no modo LAN.");
@@ -368,7 +381,7 @@ function startApiServer({ userDataPath, dataDirectory, host = "127.0.0.1", port 
       run: () => service.runCycle() });
   }
 
-  const apiRequestHandler = createApiRequestHandler({ allowedOrigin, lanPilot, digitalSyncConfig, syncState, syncScheduler, runSiwinSync });
+  const apiRequestHandler = createApiRequestHandler({ allowedOrigin, lanPilot, digitalSyncConfig, syncState, syncScheduler, runSiwinSync, runThunderbirdSync });
   const server = http.createServer(apiRequestHandler);
 
   return new Promise((resolve, reject) => {

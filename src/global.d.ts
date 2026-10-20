@@ -224,7 +224,7 @@ interface Window {
     localCurrentUser(): Promise<AuthResult>;
     dashboard(): Promise<{ ok: boolean; dashboard: DashboardSummary }>;
     siwinStatus(): Promise<{ ok: boolean; lastCad: number; lastSync: string | null; lastImported: number }>;
-    syncSiwin(): Promise<{ ok: boolean; imported: number; updated: number; total: number; importedOrders: number; updatedOrders: number; syncedItems: number; scopedClients: number; linked: number; unmatched: number; lastSync?: string | null; message?: string }>;
+    syncSiwin(): Promise<{ ok: boolean; imported?: number; updated?: number; total?: number; importedOrders?: number; updatedOrders?: number; syncedItems?: number; scopedClients?: number; linked?: number; unmatched?: number; lastSync?: string | null; message?: string; siwin?: { ok: boolean; imported?: number; importedOrders?: number; linked?: number; lastSync?: string | null; message?: string }; thunderbird?: { ok: boolean; imported?: number; linked?: number; datesSet?: number; unmatched?: number; total?: number; message?: string } }>;
     syncThunderbird(): Promise<{ ok: boolean; imported: number; linked: number; datesSet: number; unmatched: number; total: number; message?: string }>;
     onSiwinUpdated(callback: (result: { ok: boolean; imported: number; updated: number; total: number; importedOrders: number; updatedOrders: number; syncedItems: number; scopedClients: number; linked: number; unmatched: number }) => void): () => void;
     onThunderbirdUpdated(callback: (result: { ok: boolean; imported: number; linked: number; datesSet: number; unmatched: number; total: number; message?: string }) => void): () => void;

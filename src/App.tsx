@@ -314,13 +314,22 @@ export function App({ currentUser, onLogout, fontScale, startWithWindows, onFont
     setNotice("");
     try {
       const result = await dataService.syncSiwin();
-      if (!result.ok) return setNotice(result.message || "Não foi possível sincronizar com o SIWIN.");
-      setClientProfileCacheVersion((value) => value + 1);
-      setLastSiwinSync(result.lastSync || new Date().toISOString());
-      setNotice(result.imported || result.importedOrders || result.linked
-        ? `${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`
-        : "SIWIN conferido: nenhum cliente ou vínculo novo encontrado.");
-      await reload();
+      const siwinResult = result.siwin || result;
+      const thunderbirdResult = result.thunderbird;
+      if (siwinResult.ok !== false) {
+        setClientProfileCacheVersion((value) => value + 1);
+        setLastSiwinSync(siwinResult.lastSync || result.lastSync || new Date().toISOString());
+      }
+      const siwinSummary = siwinResult.ok === false
+        ? `falhou: ${siwinResult.message || "erro não informado"}`
+        : `${siwinResult.imported || 0} cliente(s), ${siwinResult.importedOrders || 0} sessão(ões) e ${siwinResult.linked || 0} vínculo(s) novo(s)`;
+      const thunderbirdSummary = !thunderbirdResult
+        ? "não executado; reinicie o servidor atualizado"
+        : thunderbirdResult.ok === false
+          ? `falhou: ${thunderbirdResult.message || "caixa de entrada indisponível"}`
+          : `${thunderbirdResult.imported || 0} seleção(ões) nova(s), ${thunderbirdResult.datesSet || 0} data(s) registrada(s), ${thunderbirdResult.unmatched || 0} sem pedido correspondente`;
+      setNotice(`SIWIN: ${siwinSummary}. Thunderbird: ${thunderbirdSummary}.`);
+      if (siwinResult.ok !== false || thunderbirdResult?.ok) await reload();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Não foi possível sincronizar com o SIWIN.");
     } finally { setBusy(false); }
