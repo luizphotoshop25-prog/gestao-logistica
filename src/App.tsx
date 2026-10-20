@@ -12,6 +12,7 @@ import {
   Layers3,
   ExternalLink,
   Paperclip,
+  RefreshCw,
   PackageCheck,
   PackageOpen,
   Save,
@@ -287,10 +288,11 @@ export function App({ currentUser, onLogout, fontScale, startWithWindows, onFont
   }, [reload]);
 
   useEffect(() => {
+    if (currentUser.role !== "coordinator") return;
     void dataService.siwinStatus().then((result) => {
       if (result.ok) setLastSiwinSync(result.lastSync);
     });
-  }, []);
+  }, [currentUser.role]);
 
   useEffect(() => dataService.onSiwinUpdated((result) => {
     if (result.ok) setClientProfileCacheVersion((value) => value + 1);
@@ -310,15 +312,18 @@ export function App({ currentUser, onLogout, fontScale, startWithWindows, onFont
   const syncSiwin = async () => {
     setBusy(true);
     setNotice("");
-    const result = await dataService.syncSiwin();
-    setBusy(false);
-    if (!result.ok) return setNotice(result.message || "Não foi possível sincronizar com o SIWIN.");
-    setClientProfileCacheVersion((value) => value + 1);
-    setLastSiwinSync(new Date().toISOString());
-    setNotice(result.imported || result.importedOrders || result.linked
-      ? `${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`
-      : "SIWIN conferido: nenhum cliente ou vínculo novo encontrado.");
-    await reload();
+    try {
+      const result = await dataService.syncSiwin();
+      if (!result.ok) return setNotice(result.message || "Não foi possível sincronizar com o SIWIN.");
+      setClientProfileCacheVersion((value) => value + 1);
+      setLastSiwinSync(result.lastSync || new Date().toISOString());
+      setNotice(result.imported || result.importedOrders || result.linked
+        ? `${result.imported} cliente(s) novo(s), ${result.importedOrders} sessão(ões) nova(s) e ${result.linked} vínculo(s) pelo SIWIN.`
+        : "SIWIN conferido: nenhum cliente ou vínculo novo encontrado.");
+      await reload();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Não foi possível sincronizar com o SIWIN.");
+    } finally { setBusy(false); }
   };
 
   const syncThunderbird = async () => {
@@ -642,6 +647,7 @@ export function App({ currentUser, onLogout, fontScale, startWithWindows, onFont
         <SolicitationNotifications onOpen={openNotifiedSolicitation} />
         <div className="shell-account"><span className="shell-connection">{window.gestaoConfig.dataTransport === 'http' ? 'Acesso remoto' : 'Acesso local'}</span><div><strong>{currentUser.nome}</strong><small>{currentUser.role === 'employee' ? 'Funcionário' : 'Coordenador'}</small></div>{onLogout && <button className="ui-button" onClick={() => { if (detail && formDirty) setConfirmation({ title: "Sair sem salvar?", message: "A ficha possui alterações que ainda não foram salvas.", confirmLabel: "Descartar e sair", tone: "warning", onConfirm: () => onLogout() }); else onLogout(); }}>Sair</button>}</div>
         {window.gestaoConfig.dataTransport !== 'http' && <IntegrationMenu busy={busy} lastSync={lastSiwinSync} onThunderbird={() => void syncThunderbird()} onSiwin={() => void syncSiwin()} onImport={() => void openImport()} />}
+        {window.gestaoConfig.dataTransport === 'http' && currentUser.role === 'coordinator' && <button className="ui-button" onClick={() => void syncSiwin()} disabled={busy} title={lastSiwinSync ? `Última sincronização: ${new Date(lastSiwinSync).toLocaleString()}` : "Sincronizar pedidos do SIWIN"}><RefreshCw size={16} className={busy ? "spin" : undefined} />{busy ? "Sincronizando…" : "Sincronizar agora"}</button>}
       </header>
 
       <main>

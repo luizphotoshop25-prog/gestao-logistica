@@ -2248,6 +2248,7 @@ module.exports = {
   addAttachment,
   getAttachmentPath,
   getSiwinStatus,
+  createSafetyBackup,
   shouldRefreshSiwinScope,
   getMaxSiwinCad,
   getUnlinkedSessions,
