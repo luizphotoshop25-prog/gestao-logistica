@@ -13,7 +13,7 @@ $cloudflaredPath = Join-Path $PilotTools "cloudflared.exe"
 $logDirectory = Join-Path $PilotTools "logs"
 $cloudflaredPidPath = Join-Path $PilotTools "pilot-cloudflared.pid"
 $apiOrigin = "http://127.0.0.1:8787"
-$publicConfigUrl = "https://raw.githubusercontent.com/$owner/$repository/$branch/remote-config.json"
+$publicConfigUrl = "https://raw.githubusercontent.com/$owner/$repository/refs/heads/$branch/remote-config.json"
 
 function Test-Health([string]$url) {
   try {

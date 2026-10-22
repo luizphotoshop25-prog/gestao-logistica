@@ -5,7 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const ts = require("typescript");
 const { loadClientConfig, validateApiUrl } = require("../electron/client-config.cjs");
-const { OFFICIAL_REMOTE_CONFIG_URL, OFFICIAL_REMOTE_CONFIG_API_URL, checkRemoteApiHealth, fetchRemoteConfig, resolveRemoteConfig, validateRemoteConfig } = require("../electron/remote-config.cjs");
+const { OFFICIAL_REMOTE_CONFIG_URL, checkRemoteApiHealth, fetchRemoteConfig, resolveRemoteConfig, validateRemoteConfig } = require("../electron/remote-config.cjs");
 const { loadClientBuild } = require("../electron/client-build.cjs");
 
 async function main() {
@@ -32,7 +32,11 @@ async function main() {
     assert.deepEqual(validateRemoteConfig(remote), remote);
     const workersRemote = { ...remote, apiBaseUrl: "https://gestao-logistica-api.example-account.workers.dev" };
     assert.deepEqual(validateRemoteConfig(workersRemote), workersRemote);
-    assert.equal(OFFICIAL_REMOTE_CONFIG_URL, "https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/master/remote-config.json", "installed client marker remains compatible");
+    assert.equal(OFFICIAL_REMOTE_CONFIG_URL, "https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/refs/heads/master/remote-config.json", "remote config uses uncached branch path without REST API quota");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, "../build/remote-client.json"), "utf8")).remoteConfigUrl, OFFICIAL_REMOTE_CONFIG_URL);
+    for (const startupScript of ["../scripts/start-gestao-logistica-pilot.ps1", "../scripts/ensure-pilot-connectivity.ps1"]) {
+      assert.match(fs.readFileSync(path.join(__dirname, startupScript), "utf8"), /raw\.githubusercontent\.com[^\r\n]*refs\/heads\/[^\r\n]*remote-config\.json/);
+    }
     for (const apiBaseUrl of ["http://pilot.trycloudflare.com", "https://pilot.example.com", "https://pilot.trycloudflare.com/api", "https://u:p@pilot.trycloudflare.com", "https://pilot.trycloudflare.com?x=1"]) {
       assert.throws(() => validateRemoteConfig({ ...remote, apiBaseUrl }));
     }
@@ -40,10 +44,11 @@ async function main() {
     assert.throws(() => validateRemoteConfig({ ...remote, enabled: false }), (error) => error.code === "REMOTE_CONFIG_DISABLED");
     await assert.rejects(fetchRemoteConfig({ configUrl: "https://example.org/remote-config.json" }), /Origem de configuração/);
     const freshFetch = async (url, init) => {
-      assert.equal(url, OFFICIAL_REMOTE_CONFIG_API_URL);
-      assert.equal(init.headers.accept, "application/vnd.github+json");
+      assert.equal(url, OFFICIAL_REMOTE_CONFIG_URL);
+      assert.equal(init.headers.accept, "application/json");
+      assert.equal(init.headers.Pragma, "no-cache");
       assert.equal(init.redirect, "error");
-      return new Response(JSON.stringify({ path: "remote-config.json", encoding: "base64", content: Buffer.from(JSON.stringify(remote)).toString("base64") }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(remote), { status: 200, headers: { "content-type": "application/json" } });
     };
     assert.deepEqual(await fetchRemoteConfig({ fetchImpl: freshFetch }), remote);
     await assert.rejects(fetchRemoteConfig({ fetchImpl: async () => new Response(JSON.stringify({ path: "remote-config.json", encoding: "base64", content: Buffer.from("x".repeat(5000)).toString("base64") })) }), /tamanho permitido/);
@@ -61,8 +66,7 @@ async function main() {
     const cached = await resolveRemoteConfig({ cachePath, fetchImpl: async () => { throw new Error("offline"); } });
     assert.equal(cached.ok, true);
     assert.equal(cached.source, "cache");
-    const disabledFile = { path: "remote-config.json", encoding: "base64", content: Buffer.from(JSON.stringify({ environment: "pilot", enabled: false })).toString("base64") };
-    const disabled = await resolveRemoteConfig({ cachePath, fetchImpl: async () => new Response(JSON.stringify(disabledFile)) });
+    const disabled = await resolveRemoteConfig({ cachePath, fetchImpl: async () => new Response(JSON.stringify({ environment: "pilot", enabled: false })) });
     assert.equal(disabled.ok, false, "disabled remote config must not use stale cache");
     fs.rmSync(cachePath, { force: true });
     const noCache = await resolveRemoteConfig({ cachePath, fetchImpl: async () => { throw new Error("offline"); } });
