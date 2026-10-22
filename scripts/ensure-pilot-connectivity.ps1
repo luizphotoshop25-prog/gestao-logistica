@@ -16,7 +16,7 @@ $tunnelLog = Join-Path $PilotTools "logs\cloudflared.stderr.log"
 $cloudflaredPath = Join-Path $PilotTools "cloudflared.exe"
 $launcher = Join-Path $PilotTools "start-gestao-logistica-pilot.ps1"
 $apiOrigin = "http://127.0.0.1:8787"
-$publicConfigUrl = "https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/master/remote-config.json"
+$publicConfigUrl = "https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/refs/heads/master/remote-config.json"
 
 function Write-OperationalLog([string]$Event, [string]$Detail = "") {
   New-Item -ItemType Directory -Path $opsDirectory -Force | Out-Null

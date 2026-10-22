@@ -4,7 +4,7 @@ Esta etapa mantém o SQLite no servidor e usa a API existente. O Cloudflare Tunn
 
 ## Configuração pública do cliente
 
-O cliente remoto consulta `https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/master/remote-config.json` em toda inicialização. O arquivo contém somente `apiBaseUrl`, `environment` e `enabled`; não contém tokens, senhas ou dados operacionais. A aplicação aceita apenas HTTPS em `*.trycloudflare.com` durante o piloto.
+O cliente remoto consulta `https://raw.githubusercontent.com/luizphotoshop25-prog/gestao-logistica/refs/heads/master/remote-config.json` em toda inicialização. Essa URL de arquivo público evita o limite de consultas da API REST anônima do GitHub. O arquivo contém somente `apiBaseUrl`, `environment` e `enabled`; não contém tokens, senhas ou dados operacionais. A aplicação aceita apenas HTTPS em `*.trycloudflare.com` ou `*.workers.dev` durante o piloto.
 
 Uma URL válida é armazenada atomicamente em `%APPDATA%` no arquivo `gestao-client-cache.json`. Se o GitHub estiver indisponível, o aplicativo reutiliza esse último valor válido. Sem cache, ou com a configuração explicitamente desativada, não abre janela local nem inicializa SQLite; mostra a mensagem de conexão com opções para tentar novamente ou fechar. Se a API ficar indisponível depois da leitura da configuração, o aplicativo permanece em HTTP e exibe a tela de login com tentativa de reconexão.
 
